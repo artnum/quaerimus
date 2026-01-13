@@ -7,18 +7,22 @@ CFLAGS=`pkg-config --cflags memarena openssl mariadb` -ggdb -Wall -Wextra -pedan
 else
 CFLAGS=`pkg-config --cflags memarena openssl mariadb` -O2 -DNDEBUG -march=native
 endif
-SRCFILES=$(wildcard src/*.c)
+SRCFILES=src/main.c src/array.c
 OBJFILES=$(addprefix build/, $(addsuffix .o,$(basename $(notdir $(SRCFILES)))))
 RM=rm -Rf
 NAME=quaerimus
+AR=ar
 
 all: $(NAME)
 
-$(NAME): $(OBJFILES)
+$(NAME): $(OBJFILES) $(NAME).a
 	$(CC) $^ -o $(NAME) $(LIBS)
+
+$(NAME).a: build/quaerimus.o build/array.o
+	$(AR) rcs $@ $^
 
 build/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	$(RM) $(wildcard $(OBJFILES) $(NAME)) vgcore.*
+	$(RM) $(wildcard $(OBJFILES) $(NAME)) $(NAME).a vgcore.*
