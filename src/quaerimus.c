@@ -2,6 +2,7 @@
 #include "include/quaerimus.h"
 #include "include/array.h"
 #include <assert.h>
+#include <mariadb/mariadb_com.h>
 #include <mariadb/mysql.h>
 #include <memarena.h>
 #include <stdint.h>
@@ -101,9 +102,11 @@ void qury_stmt_dump(FILE *fp, qury_stmt_t *stmt) {
 
 static uint16_t _mtype_to_qurytype(enum enum_field_types type,
                                    unsigned int charsetnr) {
+  /*  to differentiate between binary and text type, use charsetnr :
+   *  https://dev.mysql.com/doc/c-api/5.7/en/c-api-data-structures.html
+   */
   switch (type) {
   case MYSQL_TYPE_VARCHAR:
-    /* https://dev.mysql.com/doc/c-api/5.7/en/c-api-data-structures.html */
     if (charsetnr == 63) {
       return QURY_OString;
     }
@@ -113,7 +116,10 @@ static uint16_t _mtype_to_qurytype(enum enum_field_types type,
   case MYSQL_TYPE_DATE:
     return QURY_CString;
   case MYSQL_TYPE_BLOB:
-    return QURY_OString;
+    if (charsetnr == 63) {
+      return QURY_OString;
+    }
+    return QURY_CString;
   case MYSQL_TYPE_DATETIME:
     return QURY_CString;
   case MYSQL_TYPE_DATETIME2:
@@ -141,11 +147,20 @@ static uint16_t _mtype_to_qurytype(enum enum_field_types type,
   case MYSQL_TYPE_LONG:
     return QURY_Float;
   case MYSQL_TYPE_LONG_BLOB:
-    return QURY_OString;
+    if (charsetnr == 63) {
+      return QURY_OString;
+    }
+    return QURY_CString;
   case MYSQL_TYPE_MEDIUM_BLOB:
-    return QURY_OString;
+    if (charsetnr == 63) {
+      return QURY_OString;
+    }
+    return QURY_CString;
   case MYSQL_TYPE_TINY_BLOB:
-    return QURY_OString;
+    if (charsetnr == 63) {
+      return QURY_OString;
+    }
+    return QURY_CString;
   case MYSQL_TYPE_TINY:
     return QURY_Integer;
   case MYSQL_TYPE_NEWDATE:
@@ -157,13 +172,11 @@ static uint16_t _mtype_to_qurytype(enum enum_field_types type,
   case MYSQL_TYPE_SHORT:
     return QURY_Integer;
   case MYSQL_TYPE_STRING:
-    /* https://dev.mysql.com/doc/c-api/5.7/en/c-api-data-structures.html */
     if (charsetnr == 63) {
       return QURY_OString;
     }
     return QURY_CString;
   case MYSQL_TYPE_VAR_STRING:
-    /* https://dev.mysql.com/doc/c-api/5.7/en/c-api-data-structures.html */
     if (charsetnr == 63) {
       return QURY_OString;
     }
@@ -448,6 +461,9 @@ bool qury_fetch(qury_stmt_t *stmt) {
       mybind->type = _mtype_to_qurytype(field->type, field->charsetnr);
 
       stmt->results[i].buffer_type = field->type;
+      if (field->type == MYSQL_TYPE_FLOAT) {
+        stmt->results[i].buffer_type = MYSQL_TYPE_DOUBLE;
+      }
       stmt->results[i].buffer_length = 0;
       stmt->results[i].buffer = NULL;
       stmt->results[i].error = &mybind->error;
@@ -504,6 +520,10 @@ bool qury_fetch(qury_stmt_t *stmt) {
     qury_bind_t *mybind = ((qury_bind_t *)array_get(&stmt->values, i));
     switch (mybind->type) {
     case QURY_CString: {
+      if (mybind->length == 0) {
+        mybind->is_null = true;
+        break;
+      }
       void *tmp = mem_realloc(stmt->results_arena, mybind->value.cstr,
                               sizeof(uint8_t) * (mybind->length + 1));
       if (!tmp) {
@@ -518,6 +538,10 @@ bool qury_fetch(qury_stmt_t *stmt) {
       }
     } break;
     case QURY_OString: {
+      if (mybind->length == 0) {
+        mybind->is_null = true;
+        break;
+      }
       void *tmp = mem_realloc(stmt->results_arena, mybind->value.ostr.ptr,
                               sizeof(uint8_t) * (mybind->length));
       if (!tmp) {
