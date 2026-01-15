@@ -15,14 +15,14 @@ AR=ar
 
 all: $(NAME)
 
-$(NAME): $(OBJFILES) $(NAME).a
+$(NAME): $(OBJFILES) build/$(NAME).a
 	$(CC) $^ -o $(NAME) $(LIBS)
 
-$(NAME).a: build/quaerimus.o build/array.o
+build/$(NAME).a: build/quaerimus.o build/array.o
 	$(AR) rcs $@ $^
 
 build/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	$(RM) $(wildcard $(OBJFILES) $(NAME)) $(NAME).a vgcore.*
+	$(RM) $(wildcard $(OBJFILES) $(NAME)) build/$(NAME).a vgcore.*
