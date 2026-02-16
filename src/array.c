@@ -1,52 +1,46 @@
 #include "include/array.h"
+#include "include/quaerimus_common.h"
 #include <assert.h>
 #include <memarena.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-bool array_init(array_t *array, size_t chunk_size) {
+bool array_init(array_t *array, size_t chunk_size,
+                qury_allocator_t *mem_alloctor) {
   assert(array != NULL);
   memset(array, 0, sizeof(*array));
-  array->arena = mem_arena_new(chunk_size * sizeof(uintptr_t));
-  if (!array->arena) {
-    return false;
-  }
+  array->allocator = mem_alloctor->init(0, NULL);
   array->chunk = chunk_size;
+  array->mem = mem_alloctor;
   return true;
 }
 
-array_t *array_new(size_t chunk_size) {
+array_t *array_new(size_t chunk_size, qury_allocator_t *mem_alloctor) {
   array_t *array = NULL;
-  chunk_size *= sizeof(uintptr_t);
-  mem_arena_t *arena =
-      mem_arena_new_embed(chunk_size, sizeof(*array), (void **)&array);
-  if (arena) {
+  void *allocator = mem_alloctor->init(sizeof(array_t), (void **)&array);
+  if (allocator) {
     memset(array, 0, sizeof(*array));
-    array->arena = arena;
+    array->allocator = allocator;
     array->chunk = chunk_size;
+    array->mem = mem_alloctor;
   }
   return array;
 }
 
-mem_arena_t *array_get_arena(array_t *array) {
-  if (!array) {
-    return NULL;
-  }
-  return array->arena;
-}
-
 void array_destroy(array_t *array) {
-  if (array) {
-    mem_arena_destroy(array->arena);
+  if (array && array->mem) {
+    array->mem->free(array->allocator, array->ptrs);
+    array->mem->destroy(array->allocator);
   }
 }
 
 void array_clear(array_t *array) {
   if (array) {
-    mem_arena_reset(array->arena);
     array->used = 0;
   }
 }
@@ -55,9 +49,12 @@ static int _grow_array(array_t *array, size_t size) {
   if (size == 0) {
     size = array->chunk;
   }
-  uintptr_t *tmp = mem_realloc(array->arena, array->ptrs,
-                               sizeof(*array->ptrs) * (array->capacity + size));
+  uintptr_t *tmp =
+      array->mem->realloc(array->allocator, array->ptrs,
+                          sizeof(*array->ptrs) * (array->capacity + size));
   if (tmp) {
+    memset((uint8_t *)tmp + (sizeof(*array->ptrs) * array->capacity), 0,
+           sizeof(*array->ptrs) * size);
     array->ptrs = tmp;
     array->capacity += size;
     return 1;
@@ -68,7 +65,7 @@ static int _grow_array(array_t *array, size_t size) {
 int array_push(array_t *array, uintptr_t item) {
   assert(array != NULL);
   if (array->used + 1 >= array->capacity) {
-    if (!_grow_array(array, 0)) {
+    if (!_grow_array(array, array->used + 1)) {
       return 0;
     }
   }
@@ -136,4 +133,19 @@ uintptr_t array_remove(array_t *array, size_t idx) {
           sizeof(uintptr_t) * (array->used - idx + 1));
   array->ptrs[idx] = item;
   return 1;
+}
+
+bool array_merge(array_t *dst, array_t *src) {
+  if (!dst || !src) {
+    return false;
+  }
+  if (dst->used + src->used >= dst->capacity) {
+    if (!_grow_array(dst, src->used)) {
+      return false;
+    }
+  }
+
+  memcpy(&dst->ptrs[dst->used], &src->ptrs[0], sizeof(*src->ptrs) * src->used);
+  dst->used += src->used;
+  return true;
 }

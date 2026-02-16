@@ -1,9 +1,9 @@
 DEBUG ?= 1
 CC=gcc
-LIBS=`pkg-config --libs memarena openssl mariadb`
+LIBS=`pkg-config --libs memarena openssl mariadb` -O0 -fno-omit-frame-pointer -ggdb
 
 ifeq ($(DEBUG),1)
-CFLAGS=`pkg-config --cflags memarena openssl mariadb` -ggdb -Wall -Wextra -pedantic
+CFLAGS=`pkg-config --cflags memarena openssl mariadb` -ggdb -Wall -Wextra -pedantic -O0 -fno-omit-frame-pointer
 else
 CFLAGS=`pkg-config --cflags memarena openssl mariadb` -O2 -DNDEBUG -march=native
 endif

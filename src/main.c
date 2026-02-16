@@ -8,12 +8,12 @@ int main(void) {
   qury_conn_t conn = {0};
   qury_conn_init(&conn);
 
-  if (!mysql_real_connect(&conn.mysql, "localhost", "phpmyadmin", "phpmyadmin",
+  if (!mysql_real_connect(conn.mysql, "localhost", "phpmyadmin", "phpmyadmin",
                           "bexio_copy", 0, NULL, 0)) {
-    fprintf(stderr, "mysql_real_connect : %s\n", mysql_error(&conn.mysql));
+    fprintf(stderr, "mysql_real_connect : %s\n", mysql_error(conn.mysql));
   }
-  if (mysql_ping(&conn.mysql)) {
-    fprintf(stderr, "mysql_ping : %s\n", mysql_error(&conn.mysql));
+  if (mysql_ping(conn.mysql)) {
+    fprintf(stderr, "mysql_ping : %s\n", mysql_error(conn.mysql));
   }
   qury_stmt_t *stmt = qury_new(&conn);
   qury_prepare(stmt,
@@ -35,7 +35,7 @@ int main(void) {
     qury_stmt_reset(stmt);
   }
   qury_stmt_free(stmt);
-  mysql_close(&conn.mysql);
+  mysql_close(conn.mysql);
   mysql_library_end();
   return 0;
 }

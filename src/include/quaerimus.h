@@ -1,7 +1,7 @@
 #ifndef QUAERIMUS_H__
 #define QUAERIMUS_H__
 #include "array.h"
-#include <memarena.h>
+#include "quaerimus_common.h"
 #include <mysql/mysql.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,6 +23,7 @@
 #define QURY_OString 0x0008
 #define QURY_Bool 0x0010
 #define QURY_Null 0x0020
+#define QURY_DateTime 0x0040
 #define QURY_DataCallback 0x1000
 typedef uint16_t qury_bind_value_type_t;
 typedef uint16_t qury_bind_result_type_t;
@@ -30,7 +31,7 @@ typedef uint16_t qury_bind_result_type_t;
 typedef size_t (*qury_data_callback)(uint8_t *buffer, size_t length);
 
 typedef struct {
-  MYSQL mysql;
+  MYSQL *mysql;
 } qury_conn_t;
 
 typedef union {
@@ -42,6 +43,7 @@ typedef union {
     size_t len;
   } ostr;
   bool b;
+  MYSQL_TIME dt;
   qury_data_callback cb;
 } qury_bind_value_t;
 
@@ -66,7 +68,6 @@ typedef struct {
 } qury_bind_t;
 
 typedef struct {
-  qury_conn_t conn;
   MYSQL_STMT *stmt;
   char *query;
   size_t query_length;
@@ -82,19 +83,26 @@ typedef struct {
 
   bool result_bounded;
   bool params_bounded;
+  bool query_executed;
 
   /* internal use */
-  mem_arena_t *arena;         /* arena for the stmt duration */
-  mem_arena_t *query_arena;   /* arena for one query duration */
-  mem_arena_t *results_arena; /* arena for one result set duration */
+  void *allocator; /* arena for the stmt duration */
 } qury_stmt_t;
 
 void qury_conn_init(qury_conn_t *c);
+void qury_init(qury_allocator_t *allocator);
 qury_stmt_t *qury_new(qury_conn_t *conn);
-void qury_stmt_free(qury_stmt_t *stmt);
+
+/**
+ * Reset all arena so the stmt can be use for a brand new query
+ */
+void qury_reset(qury_stmt_t *stmt);
+void qury_free(qury_stmt_t *stmt);
 bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length);
-void qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
+bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
                     size_t vlen, qury_bind_value_type_t type);
+#define qury_stmt_free(stmt) qury_free(stmt)
+
 /**
  * Execute a prepared statement
  */
@@ -137,4 +145,22 @@ void qury_stmt_reset(qury_stmt_t *stmt);
  * Get a field value
  */
 qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name);
+
+static inline bool qury_get_value(qury_stmt_t *stmt, const char *name,
+                                  qury_bind_t **v) {
+  qury_bind_t *_v = qury_get_field_value(stmt, name);
+  if (!_v || _v->type == QURY_Null || _v->is_null) {
+    return false;
+  }
+  if (v) {
+    *v = _v;
+  }
+  return true;
+}
+
+#define qury_get_cstr(v) (v)->value.cstr
+#define qury_get_int(v) (v)->value.i
+#define qury_get_float(v) (v)->value.f
+#define qury_get_datetime(v) (v)->value.dt
+
 #endif /* QUAERIMUS_H__ */
