@@ -484,6 +484,18 @@ qury_stmt_t *qury_new(qury_conn_t *conn) {
   return stmt;
 }
 
+bool qury_select_db(qury_conn_t *conn, const char *dbname) {
+  if (conn->current_db && strcmp(conn->current_db, dbname) == 0) {
+    return true;
+  }
+  free(conn->current_db);
+  if (mysql_select_db(conn->mysql, dbname) == 0) {
+    conn->current_db = strdup(dbname);
+    return true;
+  }
+  return false;
+}
+
 void qury_reset(qury_stmt_t *stmt) {
   mysql_stmt_free_result(stmt->stmt);
   mysql_stmt_reset(stmt->stmt);

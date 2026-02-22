@@ -2,6 +2,7 @@
 #define QUAERIMUS_H__
 #include "array.h"
 #include "quaerimus_common.h"
+#include <assert.h>
 #include <mysql/mysql.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ typedef size_t (*qury_data_callback)(uint8_t *buffer, size_t length);
 
 typedef struct {
   MYSQL *mysql;
+  char *current_db;
 } qury_conn_t;
 
 typedef union {
@@ -92,6 +94,7 @@ typedef struct {
 void qury_conn_init(qury_conn_t *c);
 void qury_init(qury_allocator_t *allocator);
 qury_stmt_t *qury_new(qury_conn_t *conn);
+bool qury_select_db(qury_conn_t *conn, const char *dbname);
 
 /**
  * Reset all arena so the stmt can be use for a brand new query
@@ -148,6 +151,11 @@ qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name);
 
 static inline bool qury_get_value(qury_stmt_t *stmt, const char *name,
                                   qury_bind_t **v) {
+  assert(v != NULL);
+
+  /* reset v to null here as in usage we do a serie of call with the same v
+   * without cleaning it up */
+  *v = NULL;
   qury_bind_t *_v = qury_get_field_value(stmt, name);
   if (!_v || _v->type == QURY_Null || _v->is_null) {
     return false;
