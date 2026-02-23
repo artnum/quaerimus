@@ -723,6 +723,7 @@ bool qury_fetch(qury_stmt_t *stmt) {
     qury_bind_t *mybind = ((qury_bind_t *)array_get(&stmt->values, i));
     switch (mybind->type) {
     case QURY_CString: {
+      mybind->is_null = false;
       if (mybind->length == 0) {
         mybind->is_null = true;
         break;
@@ -742,6 +743,7 @@ bool qury_fetch(qury_stmt_t *stmt) {
       }
     } break;
     case QURY_OString: {
+      mybind->is_null = false;
       if (mybind->length == 0) {
         mybind->is_null = true;
         break;
@@ -756,6 +758,7 @@ bool qury_fetch(qury_stmt_t *stmt) {
       mybind->value.ostr.len = mybind->length;
       stmt->results[i].buffer = mybind->value.ostr.ptr;
       stmt->results[i].buffer_length = mybind->length;
+
       if (mysql_stmt_fetch_column(stmt->stmt, &stmt->results[i], i, 0) != 0) {
         break;
       }
