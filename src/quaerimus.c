@@ -485,6 +485,14 @@ qury_stmt_t *qury_new(qury_conn_t *conn) {
 }
 
 bool qury_select_db(qury_conn_t *conn, const char *dbname) {
+  if (!conn) {
+    return false;
+  }
+  if (dbname == NULL && conn->current_db) {
+    free(conn->current_db);
+    conn->current_db = NULL;
+    return true;
+  }
   if (conn->current_db && strcmp(conn->current_db, dbname) == 0) {
     return true;
   }
