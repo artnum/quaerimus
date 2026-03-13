@@ -166,9 +166,24 @@ static inline bool qury_get_value(qury_stmt_t *stmt, const char *name,
   return true;
 }
 
-#define qury_get_cstr(v) (v)->value.cstr
-#define qury_get_int(v) (v)->value.i
-#define qury_get_float(v) (v)->value.f
-#define qury_get_datetime(v) (v)->value.dt
+static inline const char * qury_get_cstr(qury_bind_t *v) {
+    if (!v || v->is_null) { return NULL; }
+    return v->value.cstr;
+}
+
+static inline uint64_t qury_get_int(qury_bind_t *v) {
+    if (!v || v->is_null) { return 0; }
+    return v->value.i;
+}
+
+static inline double qury_get_float(qury_bind_t *v) {
+    if (!v || v->is_null) { return 0.0; }
+    return v->value.f;
+}
+
+static inline MYSQL_TIME qury_get_datetime(qury_bind_t *v) {
+    if (!v || v->is_null) { return (MYSQL_TIME){0}; }
+    return v->value.dt;
+}
 
 #endif /* QUAERIMUS_H__ */
