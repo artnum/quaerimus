@@ -93,7 +93,7 @@ typedef struct {
 
 void qury_conn_init(qury_conn_t *c);
 void qury_init(qury_allocator_t *allocator);
-qury_stmt_t *qury_new(qury_conn_t *conn);
+qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr);
 bool qury_select_db(qury_conn_t *conn, const char *dbname);
 
 /**

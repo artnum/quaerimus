@@ -467,16 +467,26 @@ void qury_init(qury_allocator_t *allocator) {
     }
 }
 
-qury_stmt_t *qury_new(qury_conn_t *conn) {
+qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr) {
     assert(conn != NULL);
 
     qury_stmt_t *stmt = NULL;
-    void *allocator = MemoryAllocator->init(sizeof(qury_stmt_t), (void **)&stmt);
-    if (!allocator) {
-        return NULL;
+    if (MemoryAllocator->init && allocator_userptr == NULL) {
+        allocator_userptr = MemoryAllocator->init(sizeof(qury_stmt_t),
+                                                  (void **)&stmt);
+        if (!allocator_userptr) {
+            return NULL;
+        }
     }
+    if (stmt == NULL) {
+        stmt = MemoryAllocator->alloc(allocator_userptr, sizeof(qury_stmt_t));
+        if (stmt == NULL) {
+            return NULL;
+        }
+    }
+
     memset(stmt, 0, sizeof(qury_stmt_t));
-    stmt->allocator = allocator;
+    stmt->allocator = allocator_userptr;
     stmt->stmt = mysql_stmt_init(conn->mysql);
     if (!stmt->stmt) {
         return false;
@@ -532,7 +542,8 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
     if (stmt->params.capacity > 0) {
         array_clear(&stmt->params);
     } else {
-        if (!array_init(&stmt->params, QURY_PARAMS_INIT_SIZE, MemoryAllocator)) {
+        if (!array_init(&stmt->params, QURY_PARAMS_INIT_SIZE, MemoryAllocator,
+                        stmt->allocator)) {
             return false;
         }
     }
@@ -613,7 +624,8 @@ bool qury_execute(qury_stmt_t *stmt) {
                 if (stmt->fields.capacity > 0) {
                     array_clear(&stmt->fields);
                 } else {
-                    array_init(&stmt->fields, stmt->field_cnt, MemoryAllocator);
+                    array_init(&stmt->fields, stmt->field_cnt, MemoryAllocator,
+                               stmt->allocator);
                 }
                 while ((field = mysql_fetch_field(meta)) != NULL) {
                     qury_field_name_t *f = MemoryAllocator->alloc(
@@ -649,7 +661,8 @@ bool qury_fetch(qury_stmt_t *stmt) {
         if (stmt->values.capacity > 0) {
             array_clear(&stmt->values);
         } else {
-            if (!array_init(&stmt->values, stmt->field_cnt, MemoryAllocator)) {
+            if (!array_init(&stmt->values, stmt->field_cnt, MemoryAllocator,
+                            stmt->allocator)) {
                 return false;
             }
         }

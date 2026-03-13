@@ -15,9 +15,10 @@ typedef struct _array_t {
   qury_allocator_t *mem;
 } array_t __attribute__((aligned(sizeof(max_align_t))));
 
-array_t *array_new(size_t chunk_size, qury_allocator_t *mem_alloctor);
+array_t *array_new(size_t chunk_size, qury_allocator_t *mem_alloctor,
+                   void *uptr);
 bool array_init(array_t *array, size_t chunk_size,
-                qury_allocator_t *mem_alloctor);
+                qury_allocator_t *mem_alloctor, void *uptr);
 void array_destroy(array_t *array);
 void array_clear(array_t *array);
 

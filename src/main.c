@@ -15,7 +15,7 @@ int main(void) {
   if (mysql_ping(conn.mysql)) {
     fprintf(stderr, "mysql_ping : %s\n", mysql_error(conn.mysql));
   }
-  qury_stmt_t *stmt = qury_new(&conn);
+  qury_stmt_t *stmt = qury_new(&conn, NULL);
   qury_prepare(stmt,
                "SELECT *, invoice.id AS AFDS FROM invoice LEFT JOIN pr_project "
                "AS p ON p.id = project_id "

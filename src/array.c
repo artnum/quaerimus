@@ -11,31 +11,48 @@
 #include <unistd.h>
 
 bool array_init(array_t *array, size_t chunk_size,
-                qury_allocator_t *mem_alloctor) {
+                qury_allocator_t *mem_allocator, void *uptr) {
   assert(array != NULL);
   memset(array, 0, sizeof(*array));
-  array->allocator = mem_alloctor->init(0, NULL);
+  if (mem_allocator->init && uptr == NULL) {
+    uptr = mem_allocator->init(0, NULL);
+  }
+  array->allocator = uptr;
   array->chunk = chunk_size;
-  array->mem = mem_alloctor;
+  array->mem = mem_allocator;
   return true;
 }
 
-array_t *array_new(size_t chunk_size, qury_allocator_t *mem_alloctor) {
+array_t *array_new(size_t chunk_size, qury_allocator_t *mem_allocator,
+                   void *uptr) {
   array_t *array = NULL;
-  void *allocator = mem_alloctor->init(sizeof(array_t), (void **)&array);
-  if (allocator) {
-    memset(array, 0, sizeof(*array));
-    array->allocator = allocator;
-    array->chunk = chunk_size;
-    array->mem = mem_alloctor;
+  if (!mem_allocator) {
+    return NULL;  
   }
+  if (mem_allocator->init && uptr == NULL) {
+    uptr = mem_allocator->init(sizeof(array_t), (void **)&array);
+  }
+  if (array == NULL) {
+    mem_allocator->alloc(uptr, sizeof(array_t));
+    if (!array) {
+        return NULL;
+    }
+  }
+  memset(array, 0, sizeof(*array));
+  array->allocator = uptr;
+  array->chunk = chunk_size;
+  array->mem = mem_allocator;
   return array;
 }
 
 void array_destroy(array_t *array) {
   if (array && array->mem) {
-    array->mem->free(array->allocator, array->ptrs);
-    array->mem->destroy(array->allocator);
+    if(array->mem->free) {
+      array->mem->free(array->allocator, array->ptrs);
+    }
+    if(array->mem->destroy) {
+      array->mem->destroy(array->allocator);
+    }
   }
 }
 
