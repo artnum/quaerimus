@@ -91,6 +91,8 @@ typedef struct {
   void *allocator; /* arena for the stmt duration */
 } qury_stmt_t;
 
+#define qury_error(conn) mysql_error((conn)->mysql)
+
 void qury_conn_init(qury_conn_t *c);
 void qury_init(qury_allocator_t *allocator);
 qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr);
