@@ -31,7 +31,12 @@ qury_bind_bind_int(stmt, "id", 10);
 A custom allocator can be used, still a work in progress on how I want it to
 be.
 
-## Basic operation
+## SELECT query
+
+> [!WARNING]
+> Not everything is wrapped within quaerimus. Maybe not everything will be
+> wrapped, I see no reason to create a `qury_connect` function as there is
+> already `mysql_real_connect`.
 
 A basic select with quaerimus would be like :
 
@@ -73,5 +78,14 @@ mysql_close(conn.mysql);
 mysql_libaray_end();
 ```
 
+## INSERT/UPDATE/DELETE query
 
+Nothing has been done for that yet.
 
+## License
+
+MIT.
+
+## About the name
+
+Project name was choosen by AI.
