@@ -94,8 +94,39 @@ typedef struct {
 #define qury_error(conn) mysql_error((conn)->mysql)
 
 void qury_conn_init(qury_conn_t *c);
+
+/**
+ * \brief Set the allocator
+ */
 void qury_init(qury_allocator_t *allocator);
+
+/**
+ * \brief Initialize a new query
+ *
+ * Initialize a new query object. It can be used multiple time for different
+ * query.
+ *
+ * \param [in] conn A \ref qury_conn_t pointer
+ * \param [in] allocator_userptr The context of the allocator for this query
+ * \return A new \ref qury_stmt_t object or NULL in case of failure
+ */
 qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr);
+
+/**
+ * \brief Select current database
+ *
+ * Select what is the current database for the connection. The database is
+ * saved in \ref qury_conn_t so when called multiple time with the same 
+ * \a dbname, there is no round trip to the server. So if you modify externally
+ * the current database, you should reset the state by calling the function
+ * with \a dname set NULL.
+ *
+ * \param [in] conn A \ref qury_conn_t pointer
+ * \param [in] dbname The database to select. Use NULL to reset the internal
+ *                    database name, it will not unselect on the server, just
+ *                    make sure that next call will touch the database server.
+ * \return True for success, false otherwise.
+ */
 bool qury_select_db(qury_conn_t *conn, const char *dbname);
 
 /**
@@ -103,7 +134,23 @@ bool qury_select_db(qury_conn_t *conn, const char *dbname);
  */
 void qury_reset(qury_stmt_t *stmt);
 void qury_free(qury_stmt_t *stmt);
+
+/**
+ * \brief Prepare a statement
+ *
+ * Prepare a statement with named parameters (in the form of ":name_param").
+ *
+ */
+
 bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length);
+/**
+ * \brief Bind a parameter to a statement
+ *
+ * Bind a value to the named parmeter. The name must be without colon, if the
+ * request is <em>SELECT * FROM t WHERE id = :id</em>, the \a name parameter
+ * is <em>"id"</em>.
+ *
+ */
 bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
                     size_t vlen, qury_bind_value_type_t type);
 #define qury_stmt_free(stmt) qury_free(stmt)
@@ -112,6 +159,7 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
  * Execute a prepared statement
  */
 bool qury_execute(qury_stmt_t *stmt);
+
 /**
  * Fetch a result row
  */
@@ -147,10 +195,36 @@ void qury_stmt_dump(FILE *fp, qury_stmt_t *stmt);
 void qury_stmt_reset(qury_stmt_t *stmt);
 
 /**
- * Get a field value
+ * \brief Get a field value
+ *
+ * Get a column by name of the current row. This must be called after 
+ * \ref qury_fetch and is valid until the next \ref qury_fetch. The value can 
+ * be obtained by calling \a qury_get_[cstr|int|float|datetime].
+ *
+ * \param [in] stmt The SQL statement, \ref qury_fetch should have been called
+ *                  before calling this function
+ * \param [in] name Column name. Can be the renamed name (<em>SELECT x AS 
+ *                  y</em> would be \a y) or the original name (\a x in the
+ *                  previous example)
+ * \return A pointer to the column of the current row.
  */
 qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name);
 
+/**
+ * \brief Get a field value
+ *
+ * Same as \ref qury_get_field_value. The column reference is passed as
+ * parameter to simplify successive get. There is no reason to use
+ * \ref qury_get_field_value instead of this one.
+ * \param [in] stmt The SQL statement, \ref qury_fetch should have been called
+ *                  before calling this function
+ * \param [in] name Column name. Can be the renamed name (<em>SELECT x AS 
+ *                  y</em> would be \a y) or the original name (\a x in the
+ *                  previous example)
+ * \param [out] v A pointer to the column of the current row. It will be set to
+ *                NULL if the column doesn't exist or the value is NULL.
+ * \return True if the value exists, false otherwise.
+ */
 static inline bool qury_get_value(qury_stmt_t *stmt, const char *name,
                                   qury_bind_t **v) {
   assert(v != NULL);
@@ -168,21 +242,57 @@ static inline bool qury_get_value(qury_stmt_t *stmt, const char *name,
   return true;
 }
 
+/**
+ * \brief Return column value as c string
+ *
+ * Get the string value of the current column obtained by calling 
+ * \ref qury_get_value.
+ *
+ * \param [in] v A pointer set by \ref qury_get_value. Can be NULL.
+ * \return A pointer to a string, user should copy this value, or NULL in case
+ *         v is NULL or database field is set to NULL.
+ * \see qury_get_value
+ */
 static inline const char * qury_get_cstr(qury_bind_t *v) {
     if (!v || v->is_null) { return NULL; }
     return v->value.cstr;
 }
 
+/**
+ * \brief Return column value as integer 
+ *
+ * Get the string value of the current column obtained by calling 
+ * \ref qury_get_value. Integer value is unsigned 64 bits, it can be cast to
+ * signed or smaller value if needed.
+ *
+ * \param [in] v A pointer set by \ref qury_get_value. Can be NULL.
+ * \return An integer or 0 if NULL 
+ * \see qury_get_value
+ */
 static inline uint64_t qury_get_int(qury_bind_t *v) {
     if (!v || v->is_null) { return 0; }
     return v->value.i;
 }
 
+/**
+ * \brief Return column value as double
+ *
+ * Get the string value of the current column obtained by calling 
+ * \ref qury_get_value.
+ *
+ * \param [in] v A pointer set by \ref qury_get_value. Can be NULL.
+ * \return A double or 0.0 if null
+ * \see qury_get_value
+ */
 static inline double qury_get_float(qury_bind_t *v) {
     if (!v || v->is_null) { return 0.0; }
     return v->value.f;
 }
 
+/**
+ * \warning This is not the definitive form for this function, may change
+ * \todo Finish the datetime support
+ */
 static inline MYSQL_TIME qury_get_datetime(qury_bind_t *v) {
     if (!v || v->is_null) { return (MYSQL_TIME){0}; }
     return v->value.dt;
