@@ -130,9 +130,22 @@ qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr);
 bool qury_select_db(qury_conn_t *conn, const char *dbname);
 
 /**
- * Reset all arena so the stmt can be use for a brand new query
+ * \brief Reset statment
+ *
+ * Reset a statement so it can rebound and re-run.
+ *
+ * \param [in] stmt A prepared statement
  */
 void qury_reset(qury_stmt_t *stmt);
+
+/**
+ * \brief Close and free
+ *
+ * Close the prepared statement and free all data associated with.
+ *
+ * \warning Not clear how I want to handle that ... still work in progress
+ * \param [in] stmt A prepared statement
+ */
 void qury_free(qury_stmt_t *stmt);
 
 /**
@@ -156,12 +169,23 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
 #define qury_stmt_free(stmt) qury_free(stmt)
 
 /**
- * Execute a prepared statement
+ * \brief Execute a prepared statement
+ *
+ * Execute a prepared statement, fetch columns from the result (without
+ * fetching any data yet, you must call \ref qury_fetch).
+ *
+ * \param [in] stmt A prepared statement
+ * \return True for success, false otherwise
  */
 bool qury_execute(qury_stmt_t *stmt);
 
 /**
- * Fetch a result row
+ * \brief Fetch the next row
+ *
+ * Fetch the next row and keep it ready to get value with \ref qury_get_value.
+ *
+ * \param [in] stmt An execute prepared statement.
+ * \return True while there is data, false otherwise
  */
 bool qury_fetch(qury_stmt_t *stmt);
 
@@ -189,8 +213,14 @@ bool qury_fetch(qury_stmt_t *stmt);
  * \param stmt Statement to dump
  */
 void qury_stmt_dump(FILE *fp, qury_stmt_t *stmt);
+
 /**
- * Reset a statement before running again
+ * \brief Reset a statement before running again
+ *
+ * Reset a statement, basicaly just a wrapper around \a mysql_stmt_reset.
+ *
+ * \warning Not clear how I want to handle that ... still work in progress
+ * \param [in] A prepared statement
  */
 void qury_stmt_reset(qury_stmt_t *stmt);
 
