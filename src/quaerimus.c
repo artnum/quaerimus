@@ -27,6 +27,7 @@
 #define _is_separator_char(c)                                                 \
     ((c) == ' ' || (c) == '\t' || (c) == _prefix_char || (c) == ','           \
      || (c) == ';')
+#define _is_block_close_char(c) ((c) == ')')
 #define _is_variable_prefix(c) ((c) == _prefix_char)
 #define _is_variable_char(c)                                                  \
     (((c) >= '0' && (c) <= '9') || ((c) >= 'a' && (c) <= 'z') ||              \
@@ -393,7 +394,8 @@ static inline size_t _qury_process_param(qury_stmt_t *stmt, char *query,
             continue;
         }
 
-        if (_is_separator_char(query[i]) && _st_isset(state, _ST_VARNAME)) {
+        if ((_is_separator_char(query[i]) || _is_block_close_char(query[i]))
+            && _st_isset(state, _ST_VARNAME)) {
             removed_size = i - name_start;
             query[name_start - 1] = '?';
             qury_bind_t *bind =
