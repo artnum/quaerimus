@@ -328,4 +328,8 @@ static inline MYSQL_TIME qury_get_datetime(qury_bind_t *v) {
     return v->value.dt;
 }
 
+static inline bool qury_is_null(qury_bind_t *v) {
+    if (!v || v->is_null) { return true; }
+    return false;
+}
 #endif /* QUAERIMUS_H__ */
