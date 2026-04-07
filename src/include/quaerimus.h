@@ -101,6 +101,16 @@ void qury_conn_init(qury_conn_t *c);
 void qury_init(qury_allocator_t *allocator);
 
 /**
+ * \brief Close and clean database connection
+ *
+ * Will call mysql_close and free everything allocated (except statements
+ * created with qury_new).
+ *
+ * \param [in] conn A \ref qury_conn_t pointer
+ */
+void qury_close(qury_conn_t *conn);
+
+/**
  * \brief Initialize a new query
  *
  * Initialize a new query object. It can be used multiple time for different

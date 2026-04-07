@@ -497,6 +497,17 @@ qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr) {
     return stmt;
 }
 
+void qury_close(qury_conn_t *conn) {
+    if (conn) {
+        if(conn->mysql) {
+            mysql_close(conn->mysql);
+        }
+        if (conn->current_db) {
+            free(conn->current_db);
+        }
+    }
+}
+
 bool qury_select_db(qury_conn_t *conn, const char *dbname) {
     if (!conn) {
         return false;
