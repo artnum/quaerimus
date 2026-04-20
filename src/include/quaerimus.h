@@ -329,6 +329,11 @@ static inline double qury_get_float(qury_bind_t *v) {
     return v->value.f;
 }
 
+static inline bool qury_get_bool(qury_bind_t *v) {
+    if (!v || v->is_null) { return false; }
+    return v->value.b;
+}
+
 /**
  * \warning This is not the definitive form for this function, may change
  * \todo Finish the datetime support
@@ -342,4 +347,5 @@ static inline bool qury_is_null(qury_bind_t *v) {
     if (!v || v->is_null) { return true; }
     return false;
 }
+
 #endif /* QUAERIMUS_H__ */
