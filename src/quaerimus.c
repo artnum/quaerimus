@@ -59,150 +59,23 @@ static void _dump_ostr(FILE *fp, uint8_t *ptr, size_t l) {
         fprintf(fp, "%02X ", ptr[i]);
     }
 }
-struct alloc_chunk {
-    void *ptr;
-    void *next;
-};
-struct alloc_head {
-    struct alloc_chunk *chunks;
-    struct alloc_chunk *tails;
-    bool embedded;
-};
 
 static void *_alloc(void *head, size_t len) {
-    struct alloc_chunk *ptr = malloc(len + sizeof(struct alloc_chunk));
-    if (ptr) {
-        ptr->ptr = ((uint8_t *)ptr) + sizeof(struct alloc_chunk);
-        ptr->next = NULL;
-        if (((struct alloc_head *)head)->chunks == NULL) {
-            ((struct alloc_head *)head)->chunks = ptr;
-            ((struct alloc_head *)head)->tails = ptr;
-        } else {
-            ((struct alloc_head *)head)->tails->next = ptr;
-            ((struct alloc_head *)head)->tails = ptr;
-        }
-    }
-    return ptr->ptr;
+    (void)head;
+    return malloc(len);
 }
 
 static void *_realloc(void *head, void *ptr, size_t len) {
-    if (ptr == NULL && len == 0) {
-        return NULL;
-    }
-    if (ptr == NULL) {
-        return _alloc(head, len);
-    }
-    struct alloc_chunk *c = ((struct alloc_head *)head)->chunks;
-    struct alloc_chunk *p = NULL;
-    while (c) {
-        p = c;
-        if (c->ptr == ptr) {
-            break;
-        }
-        c = c->next;
-    }
-
-    if (c) {
-        struct alloc_chunk *n = c->next;
-        struct alloc_chunk *c2 = realloc(c, len + (sizeof(struct alloc_chunk)));
-        if (c2) {
-            c2->ptr = ((uint8_t *)c2) + sizeof(struct alloc_chunk);
-            c2->next = n;
-            if (((struct alloc_head *)head)->chunks != p) {
-                p->next = c2;
-            } else {
-                ((struct alloc_head *)head)->chunks = c2;
-            }
-
-            return c2->ptr;
-        }
-    }
-    return NULL;
+    (void)head;
+    return realloc(ptr, len);
 }
 static void _free(void *head, void *ptr) {
-    struct alloc_chunk *c = ((struct alloc_head *)head)->chunks;
-    struct alloc_chunk *p = NULL;
-    while (c) {
-        p = c;
-        if (c->ptr == ptr) {
-            break;
-        }
-    }
-    if (c) {
-        if (((struct alloc_head *)head)->chunks != p) {
-            p->next = c->next;
-        } else {
-            ((struct alloc_head *)head)->chunks = c->next;
-        }
-        free(c);
-    }
-    return;
+    (void)head;
+    free(ptr);
 }
 static char *_strndup(void *head, const char *ptr, size_t len) {
-    if (ptr == NULL || len == 0) {
-        return NULL;
-    }
-    char *str = _alloc(head, len + 1);
-    if (str) {
-        memcpy(str, ptr, len);
-        str[len] = '\0';
-    }
-    return str;
-}
-
-static void *_init(size_t len, void **ptr) {
-    struct alloc_head *h = malloc(sizeof(struct alloc_head));
-    if (h) {
-        h->chunks = NULL;
-        h->tails = NULL;
-        h->embedded = false;
-        if (len > 0 && ptr) {
-            h->embedded = true;
-            *ptr = _alloc(h, len);
-            if (!*ptr) {
-                free(h);
-                h = NULL;
-            }
-        }
-    }
-    return h;
-}
-
-static void _reset(void *ptr) {
-    if (!ptr) {
-        return;
-    }
-    struct alloc_head *head = ptr;
-    struct alloc_chunk *c = head->chunks;
-    if (c) {
-        if (head->embedded) {
-            c = c->next;
-            head->chunks->next = NULL;
-            head->tails = head->chunks;
-        } else {
-            head->chunks = NULL;
-            head->tails = NULL;
-        }
-        while (c) {
-            struct alloc_chunk *n = c->next;
-            free(c);
-            c = n;
-        }
-    }
-}
-
-static void _destroy(void *ptr) {
-    struct alloc_head *h = ptr;
-    if (h) {
-        _reset(h);
-        if (h->chunks && h->embedded) {
-            free(h->chunks);
-            h->chunks = NULL;
-            h->tails = NULL;
-        }
-        free(h);
-    }
-    return;
+    (void)head;
+    return strndup(ptr, len);
 }
 
 static void *_memdup(void *head, const void *ptr, size_t len) {
@@ -214,14 +87,16 @@ static void *_memdup(void *head, const void *ptr, size_t len) {
 }
 
 static qury_allocator_t *MemoryAllocator =
-&(qury_allocator_t){.init = _init,
-    .destroy = _destroy,
+&(qury_allocator_t){
+    .init = NULL,
+    .destroy = NULL,
     .alloc = _alloc,
     .realloc = _realloc,
     .free = _free,
     .strndup = _strndup,
     .memdup = _memdup,
-    .reset = _reset};
+    .reset = NULL
+};
 
 void qury_stmt_dump(FILE *fp, qury_stmt_t *stmt) {
     assert(stmt != NULL);
@@ -580,11 +455,37 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
 
 void qury_free(qury_stmt_t *stmt) {
     if (stmt != NULL) {
+        size_t index = 0;
+        uintptr_t value = 0;
         mysql_stmt_free_result(stmt->stmt);
         mysql_stmt_close(stmt->stmt);
+
+        /* we have free so we can free value */
+        if (MemoryAllocator->free) {
+            array_foreach(&stmt->params, index, value) {
+                if (!value) { continue; }
+                qury_bind_t *bind = (qury_bind_t *)value;
+                MemoryAllocator->free(stmt->allocator, bind->name);
+                MemoryAllocator->free(stmt->allocator, (void *)value);    
+            }
+            array_foreach(&stmt->fields, index, value) {
+                if (!value) { continue; }
+                qury_field_name_t *f = (qury_field_name_t *)value;
+                MemoryAllocator->free(stmt->allocator, f->name);
+                MemoryAllocator->free(stmt->allocator, f->org_name);
+                MemoryAllocator->free(stmt->allocator, f->table);
+                MemoryAllocator->free(stmt->allocator, (void *)value);    
+            }
+            array_foreach(&stmt->values, index, value) {
+                MemoryAllocator->free(stmt->allocator, (void *)value);    
+            }
+        }
+
         array_destroy(&stmt->params);
         array_destroy(&stmt->fields);
         array_destroy(&stmt->values);
+
+        /* we have destroy so we can destroy the whole allocator */
         if (MemoryAllocator->destroy) {
             MemoryAllocator->destroy(stmt->allocator);
         }
