@@ -1,11 +1,11 @@
 DEBUG ?= 1
 CC=gcc
-LIBS=`pkg-config --libs memarena openssl mariadb` -O0 -fno-omit-frame-pointer -ggdb
+LIBS=`pkg-config --libs openssl mariadb` -O0 -fno-omit-frame-pointer -ggdb
 
 ifeq ($(DEBUG),1)
-CFLAGS=`pkg-config --cflags memarena openssl mariadb` -ggdb -Wall -Wextra -pedantic -O0 -fno-omit-frame-pointer
+CFLAGS=`pkg-config --cflags openssl mariadb` -ggdb -Wall -Wextra -pedantic -O0 
 else
-CFLAGS=`pkg-config --cflags memarena openssl mariadb` -O2 -DNDEBUG -march=native
+CFLAGS=`pkg-config --cflags openssl mariadb` -O2 -DNDEBUG -march=native
 endif
 SRCFILES=src/main.c src/array.c
 OBJFILES=$(addprefix build/, $(addsuffix .o,$(basename $(notdir $(SRCFILES)))))
