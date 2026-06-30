@@ -31,9 +31,9 @@ int array_set(array_t *array, size_t idx, uintptr_t item);
 uintptr_t array_remove(array_t *array, size_t idx);
 bool array_merge(array_t *dst, array_t *src);
 #define array_size(array) ((array)->used)
-#define array_foreach(array, index, value)                                     \
-  for (index = 0; array && index < array_size(array) &&                        \
-                  (value = array_get(array, index));                           \
+#define array_foreach(array, index, value)                                    \
+  for (index = 0; array && index < array_size(array) &&                       \
+                  (value = array_get(array, index));                          \
        index++)
 
 #endif /* ARRAY_H__ */

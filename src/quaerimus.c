@@ -88,15 +88,90 @@ static void *_memdup(void *head, const void *ptr, size_t len) {
 
 static qury_allocator_t *MemoryAllocator =
 &(qury_allocator_t){
-    .init = NULL,
-    .destroy = NULL,
+    /* classic alloc/free/realloc */
     .alloc = _alloc,
     .realloc = _realloc,
     .free = _free,
+
+    /* arena-like allocator */
+    .init = NULL,
+    .destroy = NULL,
+    .reset = NULL,
+
+
+    /* utils */
     .strndup = _strndup,
-    .memdup = _memdup,
-    .reset = NULL
+    .memdup = _memdup
 };
+
+static void clear_params(qury_stmt_t *stmt) {
+    if (MemoryAllocator->free) {
+        uintptr_t value;
+        size_t index;
+        array_foreach(&stmt->params, index, value) {
+            if (!value) { continue; }
+            qury_bind_t *bind = (qury_bind_t *)value;
+            switch(bind->type) {
+                case QURY_CString: {
+                    if (!bind->value.cstr) { break; }
+                    MemoryAllocator->free(stmt->allocator,
+                                          bind->value.cstr);
+                } break;
+                case QURY_OString: {
+                    if (!bind->value.ostr.ptr) { break; }
+                    MemoryAllocator->free(stmt->allocator,
+                                          bind->value.ostr.ptr);
+                } break;
+                default: break;
+            }
+
+            MemoryAllocator->free(stmt->allocator, bind->name);
+            MemoryAllocator->free(stmt->allocator, (void *)value);    
+        }
+    }
+    array_clear(&stmt->params);
+}
+
+static void clear_fields(qury_stmt_t *stmt) {
+    if (MemoryAllocator->free) {
+        uintptr_t value;
+        size_t index;
+        array_foreach(&stmt->fields, index, value) {
+            if (!value) { continue; }
+            qury_field_name_t *f = (qury_field_name_t *)value;
+            MemoryAllocator->free(stmt->allocator, f->name);
+            MemoryAllocator->free(stmt->allocator, f->org_name);
+            MemoryAllocator->free(stmt->allocator, f->table);
+            MemoryAllocator->free(stmt->allocator, (void *)value);    
+        }
+    }
+    array_clear(&stmt->fields);
+}
+
+static void clear_values(qury_stmt_t *stmt) {
+    if (MemoryAllocator->free) {
+        uintptr_t value;
+        size_t index;
+        array_foreach(&stmt->values, index, value) {
+            if (!value) { continue; }
+            qury_bind_t *bind = (qury_bind_t *)value;
+            switch(bind->type) {
+                case QURY_CString: {
+                    if (!bind->value.cstr) { break; }
+                    MemoryAllocator->free(stmt->allocator, bind->value.cstr);
+                } break;
+                case QURY_OString: {
+                    if (!bind->value.ostr.ptr) { break; }
+                    MemoryAllocator->free(stmt->allocator,
+                                          bind->value.ostr.ptr);
+                } break;
+                default: break;
+            }
+            MemoryAllocator->free(stmt->allocator, (void *)value);    
+        }
+    }
+    array_clear(&stmt->fields);
+}
 
 void qury_stmt_dump(FILE *fp, qury_stmt_t *stmt) {
     assert(stmt != NULL);
@@ -406,20 +481,6 @@ bool qury_select_db(qury_conn_t *conn, const char *dbname) {
     return false;
 }
 
-void qury_reset(qury_stmt_t *stmt) {
-    mysql_stmt_free_result(stmt->stmt);
-    mysql_stmt_reset(stmt->stmt);
-    if (MemoryAllocator->reset) {
-        MemoryAllocator->reset(stmt->allocator);
-    }
-    stmt->query_length = 0;
-    stmt->result_bounded = false;
-    stmt->params_bounded = false;
-    stmt->field_cnt = 0;
-    stmt->results = NULL;
-    stmt->binds = NULL;
-}
-
 bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
     assert(stmt != NULL);
     assert(query != NULL);
@@ -428,7 +489,7 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
     }
 
     if (stmt->params.capacity > 0) {
-        array_clear(&stmt->params);
+        clear_params(stmt);
     } else {
         if (!array_init(&stmt->params, QURY_PARAMS_INIT_SIZE, MemoryAllocator,
                         stmt->allocator)) {
@@ -453,41 +514,53 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
     return true;
 }
 
+void qury_reset(qury_stmt_t *stmt) {
+    mysql_stmt_free_result(stmt->stmt);
+    mysql_stmt_reset(stmt->stmt);
+
+    clear_params(stmt);
+    clear_fields(stmt);
+    clear_values(stmt);
+
+    stmt->query_length = 0;
+    stmt->result_bounded = false;
+    stmt->params_bounded = false;
+    stmt->field_cnt = 0;
+    stmt->results = NULL;
+    stmt->binds = NULL;
+
+    if (MemoryAllocator->reset) {
+        MemoryAllocator->reset(stmt->allocator);
+    } 
+}
+
 void qury_free(qury_stmt_t *stmt) {
     if (stmt != NULL) {
-        size_t index = 0;
-        uintptr_t value = 0;
         mysql_stmt_free_result(stmt->stmt);
         mysql_stmt_close(stmt->stmt);
 
         /* we have free so we can free value */
         if (MemoryAllocator->free) {
-            array_foreach(&stmt->params, index, value) {
-                if (!value) { continue; }
-                qury_bind_t *bind = (qury_bind_t *)value;
-                MemoryAllocator->free(stmt->allocator, bind->name);
-                MemoryAllocator->free(stmt->allocator, (void *)value);    
-            }
-            array_foreach(&stmt->fields, index, value) {
-                if (!value) { continue; }
-                qury_field_name_t *f = (qury_field_name_t *)value;
-                MemoryAllocator->free(stmt->allocator, f->name);
-                MemoryAllocator->free(stmt->allocator, f->org_name);
-                MemoryAllocator->free(stmt->allocator, f->table);
-                MemoryAllocator->free(stmt->allocator, (void *)value);    
-            }
-            array_foreach(&stmt->values, index, value) {
-                MemoryAllocator->free(stmt->allocator, (void *)value);    
-            }
+            MemoryAllocator->free(stmt->allocator, stmt->results);
+            MemoryAllocator->free(stmt->allocator, stmt->binds);
         }
 
+        clear_params(stmt);
         array_destroy(&stmt->params);
+
+        clear_fields(stmt);
         array_destroy(&stmt->fields);
+        
+        clear_values(stmt);
         array_destroy(&stmt->values);
 
         /* we have destroy so we can destroy the whole allocator */
         if (MemoryAllocator->destroy) {
             MemoryAllocator->destroy(stmt->allocator);
+        }
+        if (MemoryAllocator->free) {
+            MemoryAllocator->free(stmt->allocator, stmt->query);
+            MemoryAllocator->free(stmt->allocator, stmt);
         }
     }
 }
@@ -536,7 +609,7 @@ bool qury_execute(qury_stmt_t *stmt) {
             stmt->field_cnt = mysql_num_fields(meta);
             if (stmt->field_cnt > 0) {
                 if (stmt->fields.capacity > 0) {
-                    array_clear(&stmt->fields);
+                    clear_fields(stmt);
                 } else {
                     array_init(&stmt->fields, stmt->field_cnt, MemoryAllocator,
                                stmt->allocator);
@@ -643,15 +716,28 @@ bool qury_fetch(qury_stmt_t *stmt) {
         /* nullify strings buffer so we get the size we need to allocated */
         for (int i = 0; i < stmt->field_cnt; i++) {
             qury_bind_t *mybind = ((qury_bind_t *)array_get(&stmt->values, i));
-            memset(&mybind->value, 0, sizeof(qury_bind_value_t));
             switch (mybind->type) {
-                case QURY_CString:
-                case QURY_OString: {
+                case QURY_CString: {
+                    if (MemoryAllocator->free && mybind->value.cstr) {
+                        MemoryAllocator->free(stmt->allocator,
+                                              mybind->value.cstr);
+                    }
                     stmt->results[i].buffer = NULL;
                     stmt->results[i].length_value = 0;
                     stmt->results[i].buffer_length = 0;
                 } break;
+                case QURY_OString: {
+                    if (MemoryAllocator->free && mybind->value.ostr.ptr) {
+                        MemoryAllocator->free(stmt->allocator,
+                                              mybind->value.ostr.ptr);
+                    }
+                    stmt->results[i].buffer = NULL;
+                    stmt->results[i].length_value = 0;
+                    stmt->results[i].buffer_length = 0;
+                } break;
+                default: break;
             }
+            memset(&mybind->value, 0, sizeof(qury_bind_value_t));
         }
     }
 
