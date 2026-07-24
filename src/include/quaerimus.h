@@ -94,7 +94,7 @@ typedef struct {
 
 #define qury_error(conn) mysql_error((conn)->mysql)
 
-void qury_conn_init(qury_conn_t *c);
+bool qury_conn_init(qury_conn_t *c);
 
 /**
  * \brief Set the allocator

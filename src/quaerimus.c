@@ -409,9 +409,13 @@ static inline size_t _qury_process_param(qury_stmt_t *stmt, char *query,
     return 0;
 }
 
-void qury_conn_init(qury_conn_t *c) {
+bool qury_conn_init(qury_conn_t *c) {
     memset(c, 0, sizeof(*c));
-    mysql_init(c->mysql);
+    c->mysql = mysql_init(NULL);
+    if (!c->mysql) {
+        return false;
+    }
+    return true;
 }
 
 void qury_init(qury_allocator_t *allocator) {
