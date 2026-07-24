@@ -705,6 +705,7 @@ bool qury_fetch(qury_stmt_t *stmt) {
                 } break;
                 case QURY_Integer: {
                     mybind->length = sizeof(uint64_t);
+                    stmt->results[i].buffer_type = MYSQL_TYPE_LONGLONG;
                     stmt->results[i].buffer = &mybind->value.i;
                     stmt->results[i].buffer_length = mybind->length;
                 } break;
