@@ -171,7 +171,7 @@ static void clear_values(qury_stmt_t *stmt) {
             MemoryAllocator->free(stmt->allocator, (void *)value);    
         }
     }
-    array_clear(&stmt->fields);
+    array_clear(&stmt->values);
 }
 
 void qury_stmt_dump(FILE *fp, qury_stmt_t *stmt) {
