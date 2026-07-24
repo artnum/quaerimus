@@ -53,6 +53,7 @@ typedef struct {
   char *name;
   char *org_name;
   char *table;
+  char *org_table;
   enum enum_field_types type;
   unsigned int charsetnr;
   unsigned int decimals;
@@ -248,7 +249,8 @@ void qury_stmt_reset(qury_stmt_t *stmt);
  *                  previous example)
  * \return A pointer to the column of the current row.
  */
-qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name);
+qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name,
+                                  const char *table);
 
 /**
  * \brief Get a field value
@@ -272,7 +274,7 @@ static inline bool qury_get_value(qury_stmt_t *stmt, const char *name,
   /* reset v to null here as in usage we do a serie of call with the same v
    * without cleaning it up */
   *v = NULL;
-  qury_bind_t *_v = qury_get_field_value(stmt, name);
+  qury_bind_t *_v = qury_get_field_value(stmt, name, NULL);
   if (!_v || _v->type == QURY_Null || _v->is_null) {
     return false;
   }

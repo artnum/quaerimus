@@ -142,6 +142,7 @@ static void clear_fields(qury_stmt_t *stmt) {
             MemoryAllocator->free(stmt->allocator, f->name);
             MemoryAllocator->free(stmt->allocator, f->org_name);
             MemoryAllocator->free(stmt->allocator, f->table);
+            MemoryAllocator->free(stmt->allocator, f->org_table);
             MemoryAllocator->free(stmt->allocator, (void *)value);    
         }
     }
@@ -627,6 +628,8 @@ bool qury_execute(qury_stmt_t *stmt) {
                                                            stmt->allocator, field->org_name, field->org_name_length);
                     f->table = MemoryAllocator->strndup(stmt->allocator, field->table,
                                                         field->table_length);
+                    f->org_table = MemoryAllocator->strndup(stmt->allocator, field->org_table,
+                                                        field->org_table_length);
                     array_push(&stmt->fields, (uintptr_t)f);
                 }
             }
@@ -890,10 +893,19 @@ set_param_null:
     return true;
 }
 
-qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name) {
+qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name,
+                                  const char *table) {
     size_t i = 0;
     for (i = 0; i < array_size(&stmt->fields); i++) {
         qury_field_name_t *field = (qury_field_name_t *)array_get(&stmt->fields, i);
+        if (table) {
+            if (field->table && strcmp(table, field->table) != 0) {
+                continue;
+            }
+            if (field->org_table && strcmp(table, field->org_table) != 0) {
+                continue;
+            }
+        }
         if (field->name && strcmp(name, field->name) == 0) {
             break;
         }

@@ -27,7 +27,7 @@ int main(void) {
     qury_execute(stmt);
 
     while (qury_fetch(stmt)) {
-      qury_bind_t *x = qury_get_field_value(stmt, "nr");
+      qury_bind_t *x = qury_get_field_value(stmt, "nr", NULL);
       if (x) {
         printf("VALUE found %s\n", x->value.cstr);
       }
