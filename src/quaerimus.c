@@ -531,6 +531,11 @@ void qury_reset(qury_stmt_t *stmt) {
     stmt->result_bounded = false;
     stmt->params_bounded = false;
     stmt->field_cnt = 0;
+
+    if (MemoryAllocator->free) {
+        MemoryAllocator->free(stmt->allocator, stmt->results);
+        MemoryAllocator->free(stmt->allocator, stmt->binds);
+    }
     stmt->results = NULL;
     stmt->binds = NULL;
 
