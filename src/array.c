@@ -1,13 +1,9 @@
 #include "include/array.h"
 #include "include/quaerimus_common.h"
 #include <assert.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 bool array_init(array_t *array, size_t chunk_size,
                 qury_allocator_t *mem_allocator, void *uptr) {
@@ -19,6 +15,7 @@ bool array_init(array_t *array, size_t chunk_size,
   array->allocator = uptr;
   array->chunk = chunk_size;
   array->mem = mem_allocator;
+  array->heap_owned = false;
   return true;
 }
 
@@ -26,7 +23,7 @@ array_t *array_new(size_t chunk_size, qury_allocator_t *mem_allocator,
                    void *uptr) {
   array_t *array = NULL;
   if (!mem_allocator) {
-    return NULL;  
+    return NULL;
   }
   if (mem_allocator->init && uptr == NULL) {
     uptr = mem_allocator->init(sizeof(array_t), (void **)&array);
@@ -34,28 +31,41 @@ array_t *array_new(size_t chunk_size, qury_allocator_t *mem_allocator,
   if (array == NULL) {
     array = mem_allocator->alloc(uptr, sizeof(array_t));
     if (!array) {
-        return NULL;
+      return NULL;
     }
   }
   memset(array, 0, sizeof(*array));
   array->allocator = uptr;
   array->chunk = chunk_size;
   array->mem = mem_allocator;
+  array->heap_owned = true;
   return array;
 }
 
 void array_destroy(array_t *array) {
-  if (array && array->mem) {
-    void *allocator = array->allocator;
-    qury_allocator_t *mem = array->mem;
-    if(mem->free) {
-      mem->free(allocator, array->ptrs);
-      mem->free(allocator, array);
-    }
-    if(mem->destroy) {
-      mem->destroy(allocator);
-    }
+  if (!array || !array->mem) {
+    return;
   }
+  void *allocator = array->allocator;
+  qury_allocator_t *mem = array->mem;
+  bool heap_owned = array->heap_owned;
+
+  if (mem->free) {
+    mem->free(allocator, array->ptrs);
+  }
+  array->ptrs = NULL;
+  array->capacity = 0;
+  array->used = 0;
+  array->mem = NULL;
+  array->allocator = NULL;
+  array->heap_owned = false;
+
+  /* Only free the array_t when it was allocated by array_new.
+   * Embedded arrays (array_init) must not free the parent struct. */
+  if (heap_owned && mem->free) {
+    mem->free(allocator, array);
+  }
+  /* Allocator lifecycle is owned by the caller (e.g. qury_free), not here. */
 }
 
 void array_clear(array_t *array) {
@@ -66,7 +76,7 @@ void array_clear(array_t *array) {
 
 static int _grow_array(array_t *array, size_t size) {
   if (size == 0) {
-    size = array->chunk;
+    size = array->chunk ? array->chunk : 1;
   }
   uintptr_t *tmp =
       array->mem->realloc(array->allocator, array->ptrs,
@@ -107,7 +117,10 @@ uintptr_t array_shift(array_t *array) {
   }
   uintptr_t item = array->ptrs[0];
   array->used--;
-  memmove(&array->ptrs[0], &array->ptrs[1], array->used * sizeof(uintptr_t));
+  if (array->used > 0) {
+    memmove(&array->ptrs[0], &array->ptrs[1],
+            array->used * sizeof(uintptr_t));
+  }
   return item;
 }
 
@@ -118,7 +131,10 @@ int array_unshift(array_t *array, uintptr_t item) {
       return 0;
     }
   }
-  memmove(&array->ptrs[1], &array->ptrs[0], array->used * sizeof(uintptr_t));
+  if (array->used > 0) {
+    memmove(&array->ptrs[1], &array->ptrs[0],
+            array->used * sizeof(uintptr_t));
+  }
   array->ptrs[0] = item;
   array->used++;
   return 1;
@@ -148,10 +164,13 @@ uintptr_t array_remove(array_t *array, size_t idx) {
   if (idx >= array->used) {
     return 0;
   }
-  memmove(&array->ptrs[idx], &array->ptrs[idx + 1],
-          sizeof(uintptr_t) * (array->used - idx + 1));
+  uintptr_t item = array->ptrs[idx];
   array->used--;
-  return 1;
+  if (idx < array->used) {
+    memmove(&array->ptrs[idx], &array->ptrs[idx + 1],
+            sizeof(uintptr_t) * (array->used - idx));
+  }
+  return item;
 }
 
 bool array_merge(array_t *dst, array_t *src) {

@@ -24,23 +24,25 @@
 #define _prefix_char ':'
 /* allows variable name to be :varname: */
 #define _is_quote_char(c) ((c) == '\'' || (c) == '`' || (c) == '"')
-#define _is_separator_char(c)                                                 \
-    ((c) == ' ' || (c) == '\t' || (c) == _prefix_char || (c) == ','           \
-     || (c) == ';')
+#define _is_separator_char(c)                                                  \
+    ((c) == ' ' || (c) == '\t' || (c) == '\n' || (c) == '\r'                   \
+     || (c) == _prefix_char || (c) == ',' || (c) == ';')
 #define _is_block_close_char(c) ((c) == ')')
 #define _is_variable_prefix(c) ((c) == _prefix_char)
-#define _is_variable_char(c)                                                  \
-    (((c) >= '0' && (c) <= '9') || ((c) >= 'a' && (c) <= 'z') ||              \
+#define _is_variable_char(c)                                                   \
+    (((c) >= '0' && (c) <= '9') || ((c) >= 'a' && (c) <= 'z') ||               \
      ((c) >= 'A' && (c) <= 'Z') || ((c) == '_'))
 #define _is_escape_char(c) ((c) == '\\')
 
 static const char *_type_to_str(qury_bind_value_type_t type) {
-    switch (type) {
+    switch (type & QURY_TYPE_MASK) {
         default:
         case QURY_None:
             return "none";
         case QURY_Integer:
             return "integer";
+        case QURY_UInteger:
+            return "uinteger";
         case QURY_OString:
             return "bytes";
         case QURY_CString:
@@ -104,29 +106,42 @@ static qury_allocator_t *MemoryAllocator =
     .memdup = _memdup
 };
 
+/* Free owned string/blob payload on a bind (not the bind itself). */
+static void free_bind_payload(qury_stmt_t *stmt, qury_bind_t *bind) {
+    if (!bind || !MemoryAllocator->free) {
+        return;
+    }
+    switch (bind->type & QURY_TYPE_MASK) {
+        case QURY_CString:
+            if (bind->value.cstr && !(bind->type & QURY_DataCallback)) {
+                MemoryAllocator->free(stmt->allocator, bind->value.cstr);
+                bind->value.cstr = NULL;
+            }
+            break;
+        case QURY_OString:
+            if (bind->value.ostr.ptr && !(bind->type & QURY_DataCallback)) {
+                MemoryAllocator->free(stmt->allocator, bind->value.ostr.ptr);
+                bind->value.ostr.ptr = NULL;
+                bind->value.ostr.len = 0;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 static void clear_params(qury_stmt_t *stmt) {
     if (MemoryAllocator->free) {
         uintptr_t value;
         size_t index;
         array_foreach(&stmt->params, index, value) {
-            if (!value) { continue; }
-            qury_bind_t *bind = (qury_bind_t *)value;
-            switch(bind->type) {
-                case QURY_CString: {
-                    if (!bind->value.cstr) { break; }
-                    MemoryAllocator->free(stmt->allocator,
-                                          bind->value.cstr);
-                } break;
-                case QURY_OString: {
-                    if (!bind->value.ostr.ptr) { break; }
-                    MemoryAllocator->free(stmt->allocator,
-                                          bind->value.ostr.ptr);
-                } break;
-                default: break;
+            if (!value) {
+                continue;
             }
-
+            qury_bind_t *bind = (qury_bind_t *)value;
+            free_bind_payload(stmt, bind);
             MemoryAllocator->free(stmt->allocator, bind->name);
-            MemoryAllocator->free(stmt->allocator, (void *)value);    
+            MemoryAllocator->free(stmt->allocator, (void *)value);
         }
     }
     array_clear(&stmt->params);
@@ -154,21 +169,12 @@ static void clear_values(qury_stmt_t *stmt) {
         uintptr_t value;
         size_t index;
         array_foreach(&stmt->values, index, value) {
-            if (!value) { continue; }
-            qury_bind_t *bind = (qury_bind_t *)value;
-            switch(bind->type) {
-                case QURY_CString: {
-                    if (!bind->value.cstr) { break; }
-                    MemoryAllocator->free(stmt->allocator, bind->value.cstr);
-                } break;
-                case QURY_OString: {
-                    if (!bind->value.ostr.ptr) { break; }
-                    MemoryAllocator->free(stmt->allocator,
-                                          bind->value.ostr.ptr);
-                } break;
-                default: break;
+            if (!value) {
+                continue;
             }
-            MemoryAllocator->free(stmt->allocator, (void *)value);    
+            qury_bind_t *bind = (qury_bind_t *)value;
+            free_bind_payload(stmt, bind);
+            MemoryAllocator->free(stmt->allocator, (void *)value);
         }
     }
     array_clear(&stmt->values);
@@ -312,11 +318,40 @@ static uint16_t _mtype_to_qurytype(enum enum_field_types type,
     return QURY_Null;
 }
 
-static inline size_t _qury_process_param(qury_stmt_t *stmt, char *query,
-                                         size_t *length) {
+/* Emit one named param at [name_start, i). Returns false on OOM. */
+static bool _emit_named_param(qury_stmt_t *stmt, char *query, size_t *length,
+                              size_t name_start, size_t i) {
+    size_t removed_size = i - name_start;
+    query[name_start - 1] = '?';
+    qury_bind_t *bind =
+        MemoryAllocator->alloc(stmt->allocator, sizeof(*bind));
+    if (!bind) {
+        return false;
+    }
+    memset(bind, 0, sizeof(*bind));
+    bind->name = MemoryAllocator->strndup(stmt->allocator, &query[name_start],
+                                          removed_size);
+    if (!bind->name) {
+        MemoryAllocator->free(stmt->allocator, bind);
+        return false;
+    }
+    if (!array_push(&stmt->params, (uintptr_t)bind)) {
+        MemoryAllocator->free(stmt->allocator, bind->name);
+        MemoryAllocator->free(stmt->allocator, bind);
+        return false;
+    }
+    memmove(&query[name_start], &query[i],
+            *length - (name_start + removed_size));
+    *length -= removed_size;
+    return true;
+}
+
+/* Parse :name placeholders into ? and fill stmt->params/binds.
+ * Returns true on success. */
+static bool _qury_process_param(qury_stmt_t *stmt, char *query,
+                                size_t *length) {
     int state = _ST_NONE;
     size_t name_start = 0;
-    size_t removed_size = 0;
     size_t i = 0;
     for (i = 0; i < *length; i++) {
         /* previous was escape char, so we skip this one as \:varname is not allowed
@@ -347,27 +382,30 @@ static inline size_t _qury_process_param(qury_stmt_t *stmt, char *query,
 
         if ((_is_separator_char(query[i]) || _is_block_close_char(query[i]))
             && _st_isset(state, _ST_VARNAME)) {
-            removed_size = i - name_start;
-            query[name_start - 1] = '?';
-            qury_bind_t *bind =
-                MemoryAllocator->alloc(stmt->allocator, sizeof(*bind));
-            if (!bind) {
-                /* TODO : error handling */
+            size_t old_i = i;
+            size_t removed = old_i - name_start;
+            if (!_emit_named_param(stmt, query, length, name_start, old_i)) {
+                return false;
             }
-            bind->name = MemoryAllocator->strndup(stmt->allocator, &query[name_start],
-                                                  i - name_start);
-            array_push(&stmt->params, (uintptr_t)bind);
-            memmove(&query[name_start], &query[i],
-                    *length - (name_start + removed_size));
-            *length -= removed_size;
-            i -= removed_size;
+            i -= removed;
             _st_clear(state, _ST_VARNAME);
             name_start = 0;
             continue;
         }
 
+        /* End of identifier without a separator: still a named param
+         * e.g. WHERE id=:id+1 or id=:id\n */
         if (!_is_variable_char(query[i]) && _st_isset(state, _ST_VARNAME)) {
+            size_t old_i = i;
+            size_t removed = old_i - name_start;
+            if (!_emit_named_param(stmt, query, length, name_start, old_i)) {
+                return false;
+            }
+            i -= removed;
             _st_clear(state, _ST_VARNAME);
+            name_start = 0;
+            /* re-process current char (may be another prefix, etc.) */
+            i--;
             continue;
         }
 
@@ -379,34 +417,26 @@ static inline size_t _qury_process_param(qury_stmt_t *stmt, char *query,
     }
     /* reach the end of string within a variable name, so it's a variable */
     if (state != _ST_FAILED && _st_isset(state, _ST_VARNAME)) {
-        removed_size = i - name_start;
-        query[name_start - 1] = '?';
-        qury_bind_t *bind = MemoryAllocator->alloc(stmt->allocator, sizeof(*bind));
-        if (!bind) {
-            /* TODO : error handling */
+        if (!_emit_named_param(stmt, query, length, name_start, i)) {
+            return false;
         }
-        bind->name = MemoryAllocator->strndup(stmt->allocator, &query[name_start],
-                                              i - name_start);
-        array_push(&stmt->params, (uintptr_t)bind);
-
-        memmove(&query[name_start], &query[i],
-                *length - (name_start + removed_size));
-        *length -= removed_size;
         _st_clear(state, _ST_VARNAME);
     }
 
     if (state == _ST_FAILED) {
-        /* TODO : something as we have an error */
+        return false;
     }
 
-    stmt->binds = MemoryAllocator->alloc(
-                                         stmt->allocator, sizeof(MYSQL_BIND) * (array_size(&stmt->params) + 1));
+    size_t nparams = array_size(&stmt->params);
+    size_t binds_bytes = sizeof(MYSQL_BIND) * (nparams + 1);
+    stmt->binds = MemoryAllocator->alloc(stmt->allocator, binds_bytes);
     if (!stmt->binds) {
-        /* TODO : error to handle again */
+        return false;
     }
+    memset(stmt->binds, 0, binds_bytes);
 
-    stmt->query[stmt->query_length] = '\0';
-    return 0;
+    stmt->query[*length] = '\0';
+    return true;
 }
 
 bool qury_conn_init(qury_conn_t *c) {
@@ -504,13 +534,25 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
             return false;
         }
     }
+
+    /* Re-prepare: free previous query and MYSQL_BIND array */
+    if (MemoryAllocator->free) {
+        MemoryAllocator->free(stmt->allocator, stmt->query);
+        MemoryAllocator->free(stmt->allocator, stmt->binds);
+    }
+    stmt->query = NULL;
+    stmt->binds = NULL;
+    stmt->params_bounded = false;
+
     stmt->query = MemoryAllocator->strndup(stmt->allocator, query, length);
     if (!stmt->query) {
         return false;
     }
     stmt->query_length = length;
 
-    _qury_process_param(stmt, stmt->query, &stmt->query_length);
+    if (!_qury_process_param(stmt, stmt->query, &stmt->query_length)) {
+        return false;
+    }
 
     int errcode = 0;
     if ((errcode =
@@ -538,13 +580,15 @@ void qury_reset(qury_stmt_t *stmt) {
     if (MemoryAllocator->free) {
         MemoryAllocator->free(stmt->allocator, stmt->results);
         MemoryAllocator->free(stmt->allocator, stmt->binds);
+        MemoryAllocator->free(stmt->allocator, stmt->query);
     }
     stmt->results = NULL;
     stmt->binds = NULL;
+    stmt->query = NULL;
 
     if (MemoryAllocator->reset) {
         MemoryAllocator->reset(stmt->allocator);
-    } 
+    }
 }
 
 void qury_free(qury_stmt_t *stmt) {
@@ -584,8 +628,9 @@ bool qury_execute(qury_stmt_t *stmt) {
 
     if (!stmt->params_bounded) {
         if (mysql_stmt_bind_param(stmt->stmt, stmt->binds)) {
-            fprintf(stderr, "mysq_stmt_bind_param : %s\n",
+            fprintf(stderr, "mysql_stmt_bind_param : %s\n",
                     mysql_stmt_error(stmt->stmt));
+            return false;
         }
         stmt->params_bounded = true;
     }
@@ -629,7 +674,12 @@ bool qury_execute(qury_stmt_t *stmt) {
                 }
                 while ((field = mysql_fetch_field(meta)) != NULL) {
                     qury_field_name_t *f = MemoryAllocator->alloc(
-                                                                  stmt->allocator, sizeof(qury_field_name_t));
+                        stmt->allocator, sizeof(qury_field_name_t));
+                    if (!f) {
+                        mysql_free_result(meta);
+                        return false;
+                    }
+                    memset(f, 0, sizeof(*f));
                     f->type = field->type;
                     f->charsetnr = field->charsetnr;
                     f->flags = field->flags;
@@ -637,12 +687,15 @@ bool qury_execute(qury_stmt_t *stmt) {
                     f->name = MemoryAllocator->strndup(stmt->allocator, field->name,
                                                        field->name_length);
                     f->org_name = MemoryAllocator->strndup(
-                                                           stmt->allocator, field->org_name, field->org_name_length);
+                        stmt->allocator, field->org_name, field->org_name_length);
                     f->table = MemoryAllocator->strndup(stmt->allocator, field->table,
                                                         field->table_length);
-                    f->org_table = MemoryAllocator->strndup(stmt->allocator, field->org_table,
-                                                        field->org_table_length);
-                    array_push(&stmt->fields, (uintptr_t)f);
+                    f->org_table = MemoryAllocator->strndup(
+                        stmt->allocator, field->org_table, field->org_table_length);
+                    if (!array_push(&stmt->fields, (uintptr_t)f)) {
+                        mysql_free_result(meta);
+                        return false;
+                    }
                 }
             }
             mysql_free_result(meta);
@@ -682,18 +735,22 @@ bool qury_fetch(qury_stmt_t *stmt) {
             memset(&stmt->results[i], 0, sizeof(MYSQL_BIND));
             mybind->name = field->name;
             mybind->is_null = false;
-            mybind->is_unsigned = false;
+            mybind->is_unsigned = !!(field->flags & UNSIGNED_FLAG);
             mybind->length = 0;
             mybind->type = _mtype_to_qurytype(field->type, field->charsetnr);
 
             stmt->results[i].buffer_type = field->type;
-            if (field->type == MYSQL_TYPE_FLOAT) {
+            if (field->type == MYSQL_TYPE_FLOAT
+                || field->type == MYSQL_TYPE_DECIMAL
+                || field->type == MYSQL_TYPE_NEWDECIMAL) {
                 stmt->results[i].buffer_type = MYSQL_TYPE_DOUBLE;
             }
             stmt->results[i].buffer_length = 0;
             stmt->results[i].buffer = NULL;
             stmt->results[i].error = &mybind->error;
             stmt->results[i].length = &mybind->length;
+            stmt->results[i].is_null = (char *)&mybind->is_null;
+            stmt->results[i].is_unsigned = mybind->is_unsigned;
             switch (mybind->type) {
                 case QURY_Null: {
                     mybind->length = sizeof(uint64_t);
@@ -714,6 +771,7 @@ bool qury_fetch(qury_stmt_t *stmt) {
                 } break;
                 case QURY_Float: {
                     mybind->length = sizeof(double);
+                    stmt->results[i].buffer_type = MYSQL_TYPE_DOUBLE;
                     stmt->results[i].buffer = &mybind->value.f;
                     stmt->results[i].buffer_length = mybind->length;
                 } break;
@@ -723,6 +781,7 @@ bool qury_fetch(qury_stmt_t *stmt) {
                     stmt->results[i].buffer_length = mybind->length;
                 } break;
                 default: {
+                    /* CString / OString: buffer filled after fetch via fetch_column */
                 } break;
             }
             array_push(&stmt->values, (uintptr_t)mybind);
@@ -763,13 +822,13 @@ bool qury_fetch(qury_stmt_t *stmt) {
 
     for (int i = 0; i < stmt->field_cnt; i++) {
         qury_bind_t *mybind = ((qury_bind_t *)array_get(&stmt->values, i));
+        /* is_null was filled by the driver via results[i].is_null */
+        if (mybind->is_null) {
+            continue;
+        }
         switch (mybind->type) {
             case QURY_CString: {
-                mybind->is_null = false;
-                if (mybind->length == 0) {
-                    mybind->is_null = true;
-                    break;
-                }
+                /* length 0 is empty string, not NULL */
                 void *tmp =
                     MemoryAllocator->realloc(stmt->allocator, mybind->value.cstr,
                                              sizeof(uint8_t) * (mybind->length + 1));
@@ -785,9 +844,9 @@ bool qury_fetch(qury_stmt_t *stmt) {
                 }
             } break;
             case QURY_OString: {
-                mybind->is_null = false;
                 if (mybind->length == 0) {
-                    mybind->is_null = true;
+                    mybind->value.ostr.ptr = NULL;
+                    mybind->value.ostr.len = 0;
                     break;
                 }
                 void *tmp =
@@ -805,12 +864,8 @@ bool qury_fetch(qury_stmt_t *stmt) {
                     break;
                 }
             } break;
-            default: {
-                mybind->is_unsigned = !!stmt->results[i].is_unsigned;
-                mybind->is_null =
-                    !!(stmt->results[i].is_null == 0 ? stmt->results[i].is_null_value
-                       : true);
-            } break;
+            default:
+                break;
         }
     }
 
@@ -830,27 +885,36 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
     array_foreach(&stmt->params, index, value) {
         qury_bind_t *param = (qury_bind_t *)value;
         if (strcasecmp(param->name, name) == 0) {
+            /* Drop previous owned string/blob if rebinding the same slot */
+            free_bind_payload(stmt, param);
+            memset(&param->value, 0, sizeof(param->value));
+            param->is_null = false;
+
             memset(stmt->binds + index, 0, sizeof(*stmt->binds));
             MYSQL_BIND *mybind = stmt->binds + index;
             mybind->length = &param->length;
             mybind->error = &param->error;
-            stmt->binds[index].is_null = 0;
-            switch (type & ~QURY_DataCallback) {
+            mybind->is_null = 0;
+            /* Must re-bind params after any change */
+            stmt->params_bounded = false;
+
+            switch (type & QURY_TYPE_MASK) {
                 case QURY_UInteger: {
                     memcpy(&param->value.i, &ptr, sizeof(quryptr_t));
                     param->length = sizeof(quryptr_t);
                     mybind->buffer = &param->value.i;
                     mybind->buffer_type = MYSQL_TYPE_LONGLONG;
-                    mybind->is_unsigned = true;
+                    mybind->is_unsigned = 1;
+                    param->is_unsigned = true;
                 } break;
                 case QURY_Integer: {
                     memcpy(&param->value.i, &ptr, sizeof(quryptr_t));
                     param->length = sizeof(quryptr_t);
                     mybind->buffer = &param->value.i;
                     mybind->buffer_type = MYSQL_TYPE_LONGLONG;
+                    param->is_unsigned = false;
                 } break;
                 case QURY_Bool: {
-                    /* char is big enough */
                     param->value.b = !!ptr;
                     param->length = sizeof(param->value.b);
                     mybind->buffer = &param->value.b;
@@ -869,7 +933,11 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
                         } else {
                             param->length = strlen((const char *)(uintptr_t)ptr);
                             param->value.cstr = MemoryAllocator->strndup(
-                                                                         stmt->allocator, (const char *)(uintptr_t)ptr, param->length);
+                                stmt->allocator, (const char *)(uintptr_t)ptr,
+                                param->length);
+                            if (!param->value.cstr) {
+                                return false;
+                            }
                             mybind->buffer = param->value.cstr;
                             mybind->length = &param->length;
                         }
@@ -884,7 +952,10 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
                             param->value.cb = (qury_data_callback)ptr;
                         } else {
                             param->value.ostr.ptr = MemoryAllocator->memdup(
-                                                                            stmt->allocator, (const void *)(uintptr_t)ptr, vlen);
+                                stmt->allocator, (const void *)(uintptr_t)ptr, vlen);
+                            if (!param->value.ostr.ptr) {
+                                return false;
+                            }
                             param->value.ostr.len = vlen;
                             mybind->buffer = param->value.ostr.ptr;
                             mybind->length = &param->value.ostr.len;
@@ -900,9 +971,9 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
                     /* fall through */
                 case QURY_Null: {
 set_param_null:
-                    /* no value for null */
-                    stmt->binds[index].is_null = (char *)&param->is_null;
+                    param->is_null = true;
                     param->length = 0;
+                    mybind->is_null = (char *)&param->is_null;
                     mybind->buffer_type = MYSQL_TYPE_NULL;
                     mybind->buffer = NULL;
                 } break;
@@ -919,10 +990,14 @@ qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name,
     for (i = 0; i < array_size(&stmt->fields); i++) {
         qury_field_name_t *field = (qury_field_name_t *)array_get(&stmt->fields, i);
         if (table) {
-            if (field->table && strcmp(table, field->table) != 0) {
-                continue;
+            bool table_ok = false;
+            if (field->table && strcmp(table, field->table) == 0) {
+                table_ok = true;
             }
-            if (field->org_table && strcmp(table, field->org_table) != 0) {
+            if (field->org_table && strcmp(table, field->org_table) == 0) {
+                table_ok = true;
+            }
+            if (!table_ok) {
                 continue;
             }
         }
@@ -939,4 +1014,7 @@ qury_bind_t *qury_get_field_value(qury_stmt_t *stmt, const char *name,
     return (qury_bind_t *)array_get(&stmt->values, i);
 }
 
-void qury_stmt_reset(qury_stmt_t *stmt) { mysql_stmt_reset(stmt->stmt); }
+void qury_stmt_reset(qury_stmt_t *stmt) {
+    /* Thin wrapper: prefer qury_reset for full library state cleanup. */
+    mysql_stmt_reset(stmt->stmt);
+}
