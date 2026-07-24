@@ -446,6 +446,9 @@ qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr) {
     stmt->allocator = allocator_userptr;
     stmt->stmt = mysql_stmt_init(conn->mysql);
     if (!stmt->stmt) {
+        if (MemoryAllocator->free) {
+            MemoryAllocator->free(allocator_userptr, stmt);
+        }
         return NULL;
     }
 
