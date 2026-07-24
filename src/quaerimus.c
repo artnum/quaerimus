@@ -591,7 +591,7 @@ bool qury_execute(qury_stmt_t *stmt) {
         if (param->type & QURY_DataCallback) {
             size_t rlen = 0;
             while ((rlen = param->value.cb(buffer, DATA_CALLBACK_BUFFER_SIZE)) > 0) {
-                if (!mysql_stmt_send_long_data(stmt->stmt, index, (const char *)buffer,
+                if (mysql_stmt_send_long_data(stmt->stmt, index, (const char *)buffer,
                                                rlen)) {
                     break;
                 }
