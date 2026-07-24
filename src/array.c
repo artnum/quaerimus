@@ -1,7 +1,6 @@
 #include "include/array.h"
 #include "include/quaerimus_common.h"
 #include <assert.h>
-#include <memarena.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -33,7 +32,7 @@ array_t *array_new(size_t chunk_size, qury_allocator_t *mem_allocator,
     uptr = mem_allocator->init(sizeof(array_t), (void **)&array);
   }
   if (array == NULL) {
-    mem_allocator->alloc(uptr, sizeof(array_t));
+    array = mem_allocator->alloc(uptr, sizeof(array_t));
     if (!array) {
         return NULL;
     }
@@ -47,11 +46,14 @@ array_t *array_new(size_t chunk_size, qury_allocator_t *mem_allocator,
 
 void array_destroy(array_t *array) {
   if (array && array->mem) {
-    if(array->mem->free) {
-      array->mem->free(array->allocator, array->ptrs);
+    void *allocator = array->allocator;
+    qury_allocator_t *mem = array->mem;
+    if(mem->free) {
+      mem->free(allocator, array->ptrs);
+      mem->free(allocator, array);
     }
-    if(array->mem->destroy) {
-      array->mem->destroy(array->allocator);
+    if(mem->destroy) {
+      mem->destroy(allocator);
     }
   }
 }
@@ -104,6 +106,7 @@ uintptr_t array_shift(array_t *array) {
     return 0;
   }
   uintptr_t item = array->ptrs[0];
+  array->used--;
   memmove(&array->ptrs[0], &array->ptrs[1], array->used * sizeof(uintptr_t));
   return item;
 }
@@ -115,7 +118,7 @@ int array_unshift(array_t *array, uintptr_t item) {
       return 0;
     }
   }
-  memmove(&array->ptrs[0], &array->ptrs[1], array->used * sizeof(uintptr_t));
+  memmove(&array->ptrs[1], &array->ptrs[0], array->used * sizeof(uintptr_t));
   array->ptrs[0] = item;
   array->used++;
   return 1;
@@ -135,7 +138,7 @@ int array_set(array_t *array, size_t idx, uintptr_t item) {
     }
   }
   array->ptrs[idx] = item;
-  if (idx > array->used) {
+  if (idx >= array->used) {
     array->used = idx + 1;
   }
   return 1;
@@ -145,10 +148,9 @@ uintptr_t array_remove(array_t *array, size_t idx) {
   if (idx >= array->used) {
     return 0;
   }
-  uintptr_t item = array->ptrs[idx];
   memmove(&array->ptrs[idx], &array->ptrs[idx + 1],
           sizeof(uintptr_t) * (array->used - idx + 1));
-  array->ptrs[idx] = item;
+  array->used--;
   return 1;
 }
 
