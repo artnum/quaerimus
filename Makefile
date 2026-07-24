@@ -7,7 +7,7 @@ CFLAGS=`pkg-config --cflags openssl mariadb` -ggdb -Wall -Wextra -pedantic -O0
 else
 CFLAGS=`pkg-config --cflags openssl mariadb` -O2 -DNDEBUG -march=native
 endif
-SRCFILES=src/main.c src/array.c
+SRCFILES=src/array.c
 OBJFILES=$(addprefix build/, $(addsuffix .o,$(basename $(notdir $(SRCFILES)))))
 RM=rm -Rf
 NAME=quaerimus
@@ -17,7 +17,6 @@ DOXYGEN=/usr/local/bin/doxygen
 all: $(NAME)
 
 $(NAME): $(OBJFILES) build/$(NAME).a
-	$(CC) $^ -o $(NAME) $(LIBS)
 
 build/$(NAME).a: build/quaerimus.o build/array.o
 	$(AR) rcs $@ $^
