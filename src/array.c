@@ -9,9 +9,6 @@ bool array_init(array_t *array, size_t chunk_size,
                 qury_allocator_t *mem_allocator, void *uptr) {
   assert(array != NULL);
   memset(array, 0, sizeof(*array));
-  if (mem_allocator->init && uptr == NULL) {
-    uptr = mem_allocator->init(0, NULL);
-  }
   array->allocator = uptr;
   array->chunk = chunk_size;
   array->mem = mem_allocator;
@@ -24,9 +21,6 @@ array_t *array_new(size_t chunk_size, qury_allocator_t *mem_allocator,
   array_t *array = NULL;
   if (!mem_allocator) {
     return NULL;
-  }
-  if (mem_allocator->init && uptr == NULL) {
-    uptr = mem_allocator->init(sizeof(array_t), (void **)&array);
   }
   if (array == NULL) {
     array = mem_allocator->alloc(uptr, sizeof(array_t));

@@ -95,12 +95,6 @@ static qury_allocator_t *MemoryAllocator =
     .realloc = _realloc,
     .free = _free,
 
-    /* arena-like allocator */
-    .init = NULL,
-    .destroy = NULL,
-    .reset = NULL,
-
-
     /* utils */
     .strndup = _strndup,
     .memdup = _memdup
@@ -458,13 +452,6 @@ qury_stmt_t *qury_new(qury_conn_t *conn, void *allocator_userptr) {
     assert(conn != NULL);
 
     qury_stmt_t *stmt = NULL;
-    if (MemoryAllocator->init && allocator_userptr == NULL) {
-        allocator_userptr = MemoryAllocator->init(sizeof(qury_stmt_t),
-                                                  (void **)&stmt);
-        if (!allocator_userptr) {
-            return NULL;
-        }
-    }
     if (stmt == NULL) {
         stmt = MemoryAllocator->alloc(allocator_userptr, sizeof(qury_stmt_t));
         if (stmt == NULL) {
@@ -585,10 +572,6 @@ void qury_reset(qury_stmt_t *stmt) {
     stmt->results = NULL;
     stmt->binds = NULL;
     stmt->query = NULL;
-
-    if (MemoryAllocator->reset) {
-        MemoryAllocator->reset(stmt->allocator);
-    }
 }
 
 void qury_free(qury_stmt_t *stmt) {
@@ -611,10 +594,6 @@ void qury_free(qury_stmt_t *stmt) {
         clear_values(stmt);
         array_destroy(&stmt->values);
 
-        /* we have destroy so we can destroy the whole allocator */
-        if (MemoryAllocator->destroy) {
-            MemoryAllocator->destroy(stmt->allocator);
-        }
         if (MemoryAllocator->free) {
             MemoryAllocator->free(stmt->allocator, stmt->query);
             MemoryAllocator->free(stmt->allocator, stmt);
