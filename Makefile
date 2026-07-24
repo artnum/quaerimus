@@ -24,9 +24,13 @@ build/$(NAME).a: build/quaerimus.o build/array.o
 build/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-.PHONY: clean doc
+.PHONY: clean doc test
 clean:
 	$(RM) $(wildcard $(OBJFILES) $(NAME)) build/$(NAME).a vgcore.*
+	$(MAKE) -C test clean
+
+test: build/$(NAME).a
+	$(MAKE) -C test test
 
 DIR=$(shell basename $(CURDIR))
 OUTDIR=../Web/$(DIR).doc/
