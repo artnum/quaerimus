@@ -257,7 +257,7 @@ static uint16_t _mtype_to_qurytype(enum enum_field_types type,
         case MYSQL_TYPE_GEOMETRY:
             return QURY_CString;
         case MYSQL_TYPE_INT24:
-            return QURY_Float;
+            return QURY_Integer;
         case MYSQL_TYPE_JSON:
             return QURY_CString;
         case MYSQL_TYPE_LONG:
