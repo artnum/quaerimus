@@ -25,6 +25,7 @@
 #define QURY_Bool 0x0010
 #define QURY_Null 0x0020
 #define QURY_DateTime 0x0040
+#define QURY_UInteger 0x0080
 #define QURY_DataCallback 0x1000
 typedef uint16_t qury_bind_value_type_t;
 typedef uint16_t qury_bind_result_type_t;
@@ -216,7 +217,8 @@ bool qury_fetch(qury_stmt_t *stmt);
 #define qury_stmt_bind_lbytes(stmt, name, callback)                            \
   qury_stmt_bind((stmt), (name), (quryptr_t)(callback), 0,                     \
                  QURY_OString | QURY_DataCallback)
-
+#define qury_stmt_bind_uint(stmt, name, value)                                \
+  qury_stmt_bind((stmt), (name), (quryptr_t)(value), 0, QURY_UInteger)
 /**
  * Dump the statement to the specified file
  *

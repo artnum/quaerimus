@@ -835,7 +835,14 @@ bool qury_stmt_bind(qury_stmt_t *stmt, const char *name, quryptr_t ptr,
             mybind->length = &param->length;
             mybind->error = &param->error;
             stmt->binds[index].is_null = 0;
-            switch (type) {
+            switch (type & ~QURY_DataCallback) {
+                case QURY_UInteger: {
+                    memcpy(&param->value.i, &ptr, sizeof(quryptr_t));
+                    param->length = sizeof(quryptr_t);
+                    mybind->buffer = &param->value.i;
+                    mybind->buffer_type = MYSQL_TYPE_LONGLONG;
+                    mybind->is_unsigned = true;
+                } break;
                 case QURY_Integer: {
                     memcpy(&param->value.i, &ptr, sizeof(quryptr_t));
                     param->length = sizeof(quryptr_t);
