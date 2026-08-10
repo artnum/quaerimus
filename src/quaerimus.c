@@ -551,6 +551,40 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
     return true;
 }
 
+bool qury_transaction(qury_conn_t *conn) {
+    if (!conn) {
+        return false; 
+    }
+
+    if (mysql_query(conn->mysql, "START TRANSACTION;") != 0) {
+        return false;
+    }
+    return true;
+}
+
+bool qury_commit(qury_conn_t *conn) {
+    if (!conn) {
+        return false;
+    }
+    
+    if (mysql_commit(conn->mysql) != 0) {
+        return false;
+    }
+    return true;
+}
+
+bool qury_rollback(qury_conn_t *conn) {
+    if (!conn) {
+        return false;
+    }
+    
+    if (mysql_rollback(conn->mysql) != 0) {
+        return false;
+    }
+    return true;
+}
+
+
 void qury_reset(qury_stmt_t *stmt) {
     mysql_stmt_free_result(stmt->stmt);
     mysql_stmt_reset(stmt->stmt);

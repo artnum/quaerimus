@@ -353,4 +353,8 @@ static inline bool qury_is_null(qury_bind_t *v) {
     return false;
 }
 
+bool qury_transaction(qury_conn_t *conn);
+bool qury_commit(qury_conn_t *conn); 
+bool qury_rollback(qury_conn_t *conn); 
+
 #endif /* QUAERIMUS_H__ */
