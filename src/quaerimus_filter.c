@@ -16,12 +16,6 @@
 #define _LDAP_OP_GE 4
 #define _LDAP_OP_LE 5
 
-#define _PIECE_LIT 0
-#define _PIECE_PARAM 1
-#define _PIECE_STAR 2
-
-#define _LDAP_MAX_PIECES 64
-
 typedef struct {
     char *data;
     size_t len;
@@ -31,13 +25,6 @@ typedef struct {
 } qbuf_t;
 
 typedef struct {
-    int kind;
-    size_t off;
-    size_t n;
-    const char *param;
-} filter_piece_t;
-
-typedef struct {
     const char *s;
     size_t n;
     size_t i;
@@ -45,6 +32,16 @@ typedef struct {
     void *alloc;
     bool error;
 } ldap_ctx_t;
+
+/* Assertion value: either a whole :param, or a decoded literal.
+ * Unescaped LDAP * is stored as '%' in lit (SQL LIKE wildcard). */
+typedef struct {
+    bool is_param;
+    bool has_star;
+    const char *param;
+    size_t param_n;
+    qbuf_t lit;
+} ldap_val_t;
 
 static bool _parse_ldap_filter(ldap_ctx_t *c);
 
@@ -204,135 +201,76 @@ static void _emit_sql_quoted(qbuf_t *out, const char *p, size_t n) {
     _qbuf_putc(out, '\'');
 }
 
-static void _emit_param(qbuf_t *out, const filter_piece_t *p) {
+static void _emit_param(qbuf_t *out, const ldap_val_t *v) {
     _qbuf_putc(out, ':');
-    _qbuf_put(out, p->param, p->n);
+    _qbuf_put(out, v->param, v->param_n);
 }
 
-static void _emit_like(qbuf_t *out, const filter_piece_t *pieces, size_t np,
-                       const char *lits, bool wrap) {
+static void _emit_like_lit(qbuf_t *out, const ldap_val_t *v, bool wrap) {
+    const char *p = v->lit.data;
+    size_t n = v->lit.len;
+    bool pct_first = n > 0 && p[0] == '%';
+    bool pct_last = n > 0 && p[n - 1] == '%';
     size_t i;
-    bool has_param = false;
-    bool star_first = np > 0 && pieces[0].kind == _PIECE_STAR;
-    bool star_last = np > 0 && pieces[np - 1].kind == _PIECE_STAR;
-    bool first = true;
 
-    for (i = 0; i < np; i++) {
-        if (pieces[i].kind == _PIECE_PARAM) {
-            has_param = true;
-            break;
-        }
+    _qbuf_putc(out, '\'');
+    if (wrap && !pct_first) {
+        _qbuf_putc(out, '%');
     }
-
-    if (!has_param) {
-        _qbuf_putc(out, '\'');
-        if (wrap && !star_first) {
-            _qbuf_putc(out, '%');
+    for (i = 0; i < n; i++) {
+        if (p[i] == '\'') {
+            _qbuf_putc(out, '\'');
         }
-        for (i = 0; i < np; i++) {
-            if (pieces[i].kind == _PIECE_STAR) {
-                _qbuf_putc(out, '%');
-            } else {
-                size_t j;
-                for (j = 0; j < pieces[i].n; j++) {
-                    char ch = lits[pieces[i].off + j];
-                    if (ch == '\'') {
-                        _qbuf_putc(out, '\'');
-                    }
-                    _qbuf_putc(out, ch);
-                }
-            }
-        }
-        if (wrap && !star_last) {
-            _qbuf_putc(out, '%');
-        }
-        _qbuf_putc(out, '\'');
-        return;
+        _qbuf_putc(out, p[i]);
     }
-
-    _qbuf_puts(out, "CONCAT(");
-    if (wrap && !star_first) {
-        _qbuf_puts(out, "'%'");
-        first = false;
+    if (wrap && !pct_last) {
+        _qbuf_putc(out, '%');
     }
-    for (i = 0; i < np; i++) {
-        if (!first) {
-            _qbuf_puts(out, ", ");
-        }
-        first = false;
-        if (pieces[i].kind == _PIECE_STAR) {
-            _qbuf_puts(out, "'%'");
-        } else if (pieces[i].kind == _PIECE_PARAM) {
-            _emit_param(out, &pieces[i]);
-        } else {
-            _emit_sql_quoted(out, lits + pieces[i].off, pieces[i].n);
-        }
-    }
-    if (wrap && !star_last) {
-        if (!first) {
-            _qbuf_puts(out, ", ");
-        }
-        _qbuf_puts(out, "'%'");
-    }
-    _qbuf_putc(out, ')');
+    _qbuf_putc(out, '\'');
 }
 
-static void _emit_scalar(qbuf_t *out, const filter_piece_t *pieces, size_t np,
-                         const char *lits) {
-    size_t i;
-    bool first = true;
-
-    if (np == 0) {
-        _qbuf_puts(out, "''");
+static void _emit_scalar(qbuf_t *out, const ldap_val_t *v) {
+    if (v->is_param) {
+        _emit_param(out, v);
         return;
     }
-    if (np == 1 && pieces[0].kind == _PIECE_PARAM) {
-        _emit_param(out, &pieces[0]);
+    if (_is_numeric_lit(v->lit.data, v->lit.len)) {
+        _qbuf_put(out, v->lit.data, v->lit.len);
         return;
     }
-    if (np == 1 && pieces[0].kind == _PIECE_LIT) {
-        if (_is_numeric_lit(lits + pieces[0].off, pieces[0].n)) {
-            _qbuf_put(out, lits + pieces[0].off, pieces[0].n);
-        } else {
-            _emit_sql_quoted(out, lits + pieces[0].off, pieces[0].n);
-        }
-        return;
-    }
-    if (np == 1 && pieces[0].kind == _PIECE_STAR) {
-        _qbuf_puts(out, "'*'");
-        return;
-    }
-
-    _qbuf_puts(out, "CONCAT(");
-    for (i = 0; i < np; i++) {
-        if (!first) {
-            _qbuf_puts(out, ", ");
-        }
-        first = false;
-        if (pieces[i].kind == _PIECE_STAR) {
-            _qbuf_puts(out, "'*'");
-        } else if (pieces[i].kind == _PIECE_PARAM) {
-            _emit_param(out, &pieces[i]);
-        } else {
-            _emit_sql_quoted(out, lits + pieces[i].off, pieces[i].n);
-        }
-    }
-    _qbuf_putc(out, ')');
+    _emit_sql_quoted(out, v->lit.data, v->lit.len);
 }
 
-static bool _parse_value_pieces(ldap_ctx_t *c, qbuf_t *litbuf,
-                                filter_piece_t *pieces, size_t max_pieces,
-                                size_t *npieces) {
-    bool in_lit = false;
-    size_t lit_start = 0;
+static bool _parse_ldap_value(ldap_ctx_t *c, ldap_val_t *v) {
+    memset(v, 0, sizeof(*v));
+    v->lit.alloc = c->alloc;
+    _ldap_skip_ws(c);
 
-    *npieces = 0;
+    /* Whole value is :name (nothing else before ')'). */
+    if (_ldap_peek(c) == ':' && c->i + 1 < c->n
+        && _is_variable_char(c->s[c->i + 1])) {
+        size_t save = c->i;
+        size_t start;
+        size_t n;
 
-    while (c->i < c->n) {
+        c->i++;
+        start = c->i;
+        while (c->i < c->n && _is_variable_char(c->s[c->i])) {
+            c->i++;
+        }
+        n = c->i - start;
+        _ldap_skip_ws(c);
+        if (n > 0 && _ldap_peek(c) == ')') {
+            v->is_param = true;
+            v->param = c->s + start;
+            v->param_n = n;
+            return true;
+        }
+        c->i = save;
+    }
+
+    while (c->i < c->n && c->s[c->i] != ')') {
         unsigned char ch = (unsigned char)c->s[c->i];
-        if (ch == ')') {
-            break;
-        }
         if (ch == '\\') {
             int h1;
             int h2;
@@ -346,103 +284,28 @@ static bool _parse_value_pieces(ldap_ctx_t *c, qbuf_t *litbuf,
                 c->error = true;
                 return false;
             }
-            if (!in_lit) {
-                lit_start = litbuf->len;
-                in_lit = true;
-            }
-            _qbuf_putc(litbuf, (char)((h1 << 4) | h2));
-            if (litbuf->error) {
-                c->error = true;
-                return false;
-            }
+            _qbuf_putc(&v->lit, (char)((h1 << 4) | h2));
             c->i += 3;
             continue;
         }
         if (ch == '*') {
-            if (in_lit) {
-                if (*npieces >= max_pieces) {
-                    c->error = true;
-                    return false;
-                }
-                pieces[*npieces].kind = _PIECE_LIT;
-                pieces[*npieces].off = lit_start;
-                pieces[*npieces].n = litbuf->len - lit_start;
-                pieces[*npieces].param = NULL;
-                (*npieces)++;
-                in_lit = false;
-            }
-            if (*npieces >= max_pieces) {
-                c->error = true;
-                return false;
-            }
-            pieces[*npieces].kind = _PIECE_STAR;
-            pieces[*npieces].off = 0;
-            pieces[*npieces].n = 0;
-            pieces[*npieces].param = NULL;
-            (*npieces)++;
+            v->has_star = true;
+            _qbuf_putc(&v->lit, '%');
             c->i++;
             continue;
         }
-        if (ch == ':' && c->i + 1 < c->n
-            && _is_variable_char(c->s[c->i + 1])) {
-            size_t start;
-            if (in_lit) {
-                if (*npieces >= max_pieces) {
-                    c->error = true;
-                    return false;
-                }
-                pieces[*npieces].kind = _PIECE_LIT;
-                pieces[*npieces].off = lit_start;
-                pieces[*npieces].n = litbuf->len - lit_start;
-                pieces[*npieces].param = NULL;
-                (*npieces)++;
-                in_lit = false;
-            }
-            c->i++;
-            start = c->i;
-            while (c->i < c->n && _is_variable_char(c->s[c->i])) {
-                c->i++;
-            }
-            if (*npieces >= max_pieces) {
-                c->error = true;
-                return false;
-            }
-            pieces[*npieces].kind = _PIECE_PARAM;
-            pieces[*npieces].off = 0;
-            pieces[*npieces].n = c->i - start;
-            pieces[*npieces].param = c->s + start;
-            (*npieces)++;
-            continue;
-        }
-        if (!in_lit) {
-            lit_start = litbuf->len;
-            in_lit = true;
-        }
-        _qbuf_putc(litbuf, (char)ch);
-        if (litbuf->error) {
-            c->error = true;
-            return false;
-        }
+        _qbuf_putc(&v->lit, (char)ch);
         c->i++;
     }
 
-    if (in_lit) {
-        size_t n = litbuf->len - lit_start;
-        /* drop trailing whitespace that sat before the closing ')' */
-        while (n > 0 && _is_ws((unsigned char)litbuf->data[lit_start + n - 1])) {
-            n--;
-        }
-        if (n > 0) {
-            if (*npieces >= max_pieces) {
-                c->error = true;
-                return false;
-            }
-            pieces[*npieces].kind = _PIECE_LIT;
-            pieces[*npieces].off = lit_start;
-            pieces[*npieces].n = n;
-            pieces[*npieces].param = NULL;
-            (*npieces)++;
-        }
+    while (v->lit.len > 0
+           && _is_ws((unsigned char)v->lit.data[v->lit.len - 1])) {
+        v->lit.len--;
+        v->lit.data[v->lit.len] = '\0';
+    }
+    if (v->lit.error) {
+        c->error = true;
+        return false;
     }
     return true;
 }
@@ -453,14 +316,8 @@ static bool _parse_ldap_item(ldap_ctx_t *c) {
     int op;
     int ch;
     int ch2;
-    filter_piece_t pieces[_LDAP_MAX_PIECES];
-    size_t np = 0;
-    size_t i;
-    bool has_star = false;
-    qbuf_t litbuf;
-
-    memset(&litbuf, 0, sizeof(litbuf));
-    litbuf.alloc = c->alloc;
+    ldap_val_t val;
+    bool ok;
 
     _ldap_skip_ws(c);
     attr_s = c->i;
@@ -499,37 +356,35 @@ static bool _parse_ldap_item(ldap_ctx_t *c) {
         return false;
     }
 
-    _ldap_skip_ws(c);
-    if (!_parse_value_pieces(c, &litbuf, pieces, _LDAP_MAX_PIECES, &np)) {
-        _qbuf_free(&litbuf);
+    if (!_parse_ldap_value(c, &val)) {
+        _qbuf_free(&val.lit);
         return false;
     }
 
-    if (op == _LDAP_OP_EQ && np == 1 && pieces[0].kind == _PIECE_STAR) {
+    if (op == _LDAP_OP_EQ && !val.is_param && val.has_star && val.lit.len == 1
+        && val.lit.data[0] == '%') {
         _qbuf_puts(c->out, "NULLIF(");
         _qbuf_put(c->out, c->s + attr_s, attr_n);
         _qbuf_puts(c->out, ", '') IS NOT NULL");
-        _qbuf_free(&litbuf);
-        if (c->out->error) {
+        ok = !c->out->error;
+        _qbuf_free(&val.lit);
+        if (!ok) {
             c->error = true;
-            return false;
         }
-        return true;
-    }
-
-    for (i = 0; i < np; i++) {
-        if (pieces[i].kind == _PIECE_STAR) {
-            has_star = true;
-            break;
-        }
+        return ok;
     }
 
     _qbuf_put(c->out, c->s + attr_s, attr_n);
 
-    if (op == _LDAP_OP_APPROX || (op == _LDAP_OP_EQ && has_star)) {
+    if (op == _LDAP_OP_APPROX || (op == _LDAP_OP_EQ && val.has_star)) {
         _qbuf_puts(c->out, " LIKE ");
-        _emit_like(c->out, pieces, np, litbuf.data ? litbuf.data : "",
-                   op == _LDAP_OP_APPROX);
+        if (val.is_param) {
+            _qbuf_puts(c->out, "CONCAT('%', ");
+            _emit_param(c->out, &val);
+            _qbuf_puts(c->out, ", '%')");
+        } else {
+            _emit_like_lit(c->out, &val, op == _LDAP_OP_APPROX);
+        }
     } else {
         switch (op) {
             case _LDAP_OP_EQ:
@@ -549,18 +404,18 @@ static bool _parse_ldap_item(ldap_ctx_t *c) {
                 break;
             default:
                 c->error = true;
-                _qbuf_free(&litbuf);
+                _qbuf_free(&val.lit);
                 return false;
         }
-        _emit_scalar(c->out, pieces, np, litbuf.data ? litbuf.data : "");
+        _emit_scalar(c->out, &val);
     }
 
-    _qbuf_free(&litbuf);
-    if (c->out->error) {
+    ok = !c->out->error;
+    _qbuf_free(&val.lit);
+    if (!ok) {
         c->error = true;
-        return false;
     }
-    return true;
+    return ok;
 }
 
 static bool _parse_ldap_filter_list(ldap_ctx_t *c, const char *op_sql) {
