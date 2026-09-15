@@ -18,7 +18,7 @@ all: $(NAME)
 
 $(NAME): $(OBJFILES) build/$(NAME).a
 
-build/$(NAME).a: build/quaerimus.o build/array.o
+build/$(NAME).a: build/quaerimus.o build/quaerimus_filter.o build/array.o
 	$(AR) rcs $@ $^
 
 build/%.o: src/%.c
@@ -26,7 +26,7 @@ build/%.o: src/%.c
 
 .PHONY: clean doc test
 clean:
-	$(RM) $(wildcard $(OBJFILES) $(NAME)) build/$(NAME).a vgcore.*
+	$(RM) $(wildcard $(OBJFILES) $(NAME)) build/$(NAME).a build/quaerimus.o build/quaerimus_filter.o vgcore.*
 	$(MAKE) -C test clean
 
 test: build/$(NAME).a

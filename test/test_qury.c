@@ -113,6 +113,25 @@ static void require_db(void) {
   }
 }
 
+static int cmp_u64(const void *a, const void *b) {
+  uint64_t x = *(const uint64_t *)a;
+  uint64_t y = *(const uint64_t *)b;
+  return (x > y) - (x < y);
+}
+
+/* Fetch remaining rows' id column into ids[0..max). Returns count. */
+static int fetch_ids(qury_stmt_t *stmt, uint64_t *ids, int max) {
+  int n = 0;
+  while (n < max && qury_fetch(stmt)) {
+    qury_bind_t *v = NULL;
+    ck_assert(qury_get_value(stmt, "id", &v));
+    ids[n++] = qury_get_int(v);
+  }
+  ck_assert(!qury_fetch(stmt));
+  qsort(ids, (size_t)n, sizeof(*ids), cmp_u64);
+  return n;
+}
+
 START_TEST(test_named_param_rewrite) {
   require_db();
 
@@ -339,6 +358,199 @@ START_TEST(test_bump_allocator_prepare_bind) {
 }
 END_TEST
 
+START_TEST(test_filter_sql_shape) {
+  require_db();
+
+  qury_stmt_t *stmt = qury_new(&g_conn, NULL);
+  ck_assert_ptr_nonnull(stmt);
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(note=*)", 0));
+  ck_assert_str_eq(stmt->query,
+                   "SELECT * FROM qury_test_rows WHERE NULLIF(note, '') IS NOT "
+                   "NULL");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0,
+                        "(&(note=*)(id>1)) id,name", 0));
+  ck_assert_str_eq(stmt->query,
+                   "SELECT id,name FROM qury_test_rows WHERE "
+                   "(NULLIF(note, '') IS NOT NULL AND id > 1)");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(name~=paul)", 0));
+  ck_assert_str_eq(stmt->query,
+                   "SELECT * FROM qury_test_rows WHERE name LIKE '%paul%'");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(name=a*)", 0));
+  ck_assert_str_eq(stmt->query,
+                   "SELECT * FROM qury_test_rows WHERE name LIKE 'a%'");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(!(note=*))", 0));
+  ck_assert_str_eq(stmt->query,
+                   "SELECT * FROM qury_test_rows WHERE NOT (NULLIF(note, '') "
+                   "IS NOT NULL)");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0,
+                        "(&(name~=:name)(id>:id)) id,name", 0));
+  ck_assert_str_eq(stmt->query,
+                   "SELECT id,name FROM qury_test_rows WHERE "
+                   "(name LIKE CONCAT('%', ?, '%') AND id > ?)");
+  ck_assert_uint_eq(array_size(&stmt->params), 2);
+  ck_assert_str_eq(((qury_bind_t *)array_get(&stmt->params, 0))->name, "name");
+  ck_assert_str_eq(((qury_bind_t *)array_get(&stmt->params, 1))->name, "id");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "", 0));
+  ck_assert_str_eq(stmt->query, "SELECT * FROM qury_test_rows");
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "id,name", 0));
+  ck_assert_str_eq(stmt->query, "SELECT id,name FROM qury_test_rows");
+
+  ck_assert(!qury_filter(stmt, "qury_test_rows", 0, "(&(note=*)", 0));
+  ck_assert(!qury_filter(stmt, "qury_test_rows", 0, "(&)", 0));
+
+  qury_free(stmt);
+}
+END_TEST
+
+START_TEST(test_filter_presence_and_empty) {
+  require_db();
+
+  qury_stmt_t *stmt = qury_new(&g_conn, NULL);
+  ck_assert_ptr_nonnull(stmt);
+
+  /* note='hello' only; empty string and NULL are missing */
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(note=*) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 1);
+    ck_assert_uint_eq(ids[0], 1);
+  }
+
+  /* empty + NULL */
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(!(note=*)) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 2);
+    ck_assert_uint_eq(ids[0], 2);
+    ck_assert_uint_eq(ids[1], 3);
+  }
+
+  /* flag=0 is numeric empty via NULLIF(col, '') */
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(flag=*) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 2);
+    ck_assert_uint_eq(ids[0], 1);
+    ck_assert_uint_eq(ids[1], 3);
+  }
+
+  qury_free(stmt);
+}
+END_TEST
+
+START_TEST(test_filter_compare_like_or) {
+  require_db();
+
+  qury_stmt_t *stmt = qury_new(&g_conn, NULL);
+  ck_assert_ptr_nonnull(stmt);
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(id>1) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 2);
+    ck_assert_uint_eq(ids[0], 2);
+    ck_assert_uint_eq(ids[1], 3);
+  }
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(id>=2) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 2);
+    ck_assert_uint_eq(ids[0], 2);
+    ck_assert_uint_eq(ids[1], 3);
+  }
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(name=beta) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 1);
+    ck_assert_uint_eq(ids[0], 2);
+  }
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(name~=lph) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 1);
+    ck_assert_uint_eq(ids[0], 1);
+  }
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(name=a*) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 1);
+    ck_assert_uint_eq(ids[0], 1);
+  }
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0,
+                        "(|(name=alpha)(name=gamma)) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 2);
+    ck_assert_uint_eq(ids[0], 1);
+    ck_assert_uint_eq(ids[1], 3);
+  }
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0,
+                        "(&(id>1)(name~=a)) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 2);
+    ck_assert_uint_eq(ids[0], 2); /* beta */
+    ck_assert_uint_eq(ids[1], 3); /* gamma */
+  }
+
+  qury_free(stmt);
+}
+END_TEST
+
+START_TEST(test_filter_placeholders_and_escape) {
+  require_db();
+
+  qury_stmt_t *stmt = qury_new(&g_conn, NULL);
+  ck_assert_ptr_nonnull(stmt);
+
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0,
+                        "(&(name~=:name)(id>:id)) id", 0));
+  ck_assert(qury_stmt_bind_str(stmt, "name", "et"));
+  ck_assert(qury_stmt_bind_int(stmt, "id", 1));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 1);
+    ck_assert_uint_eq(ids[0], 2); /* beta */
+  }
+
+  /* LDAP hex escape: \70 is 'p' → alpha */
+  ck_assert(qury_filter(stmt, "qury_test_rows", 0, "(name=al\\70ha) id", 0));
+  ck_assert(qury_execute(stmt));
+  {
+    uint64_t ids[8];
+    ck_assert_int_eq(fetch_ids(stmt, ids, 8), 1);
+    ck_assert_uint_eq(ids[0], 1);
+  }
+
+  qury_free(stmt);
+}
+END_TEST
+
 static Suite *qury_suite(void) {
   Suite *s = suite_create("quaerimus");
 
@@ -355,6 +567,10 @@ static Suite *qury_suite(void) {
     tcase_add_test(tc, test_string_bind_and_rebind);
     tcase_add_test(tc, test_select_db_cache);
     tcase_add_test(tc, test_bump_allocator_prepare_bind);
+    tcase_add_test(tc, test_filter_sql_shape);
+    tcase_add_test(tc, test_filter_presence_and_empty);
+    tcase_add_test(tc, test_filter_compare_like_or);
+    tcase_add_test(tc, test_filter_placeholders_and_escape);
   } else {
     fprintf(stderr,
             "test_qury: QURY_TEST_USER not set — integration tests skipped\n");

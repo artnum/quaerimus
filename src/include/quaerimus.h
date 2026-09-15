@@ -169,6 +169,42 @@ void qury_free(qury_stmt_t *stmt);
  */
 
 bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length);
+
+/**
+ * \brief Prepare a SELECT from an LDAP-style filter
+ *
+ * Translates an LDAP search filter (RFC 4515, plus \c &gt; and \c &lt;) into
+ * SQL and prepares it with \ref qury_prepare. Named placeholders
+ * (<em>:name</em>) are left in the generated SQL so they can be bound with
+ * \ref qury_stmt_bind.
+ *
+ * \a filter is the LDAP filter, optionally followed by a column list:
+ *
+ * \code
+ * (&(mail=*)(age>:age)) id,name
+ * \endcode
+ *
+ * If the column list is omitted, \c SELECT * is used. An empty filter
+ * (or NULL) prepares \c SELECT * FROM table with no WHERE clause.
+ *
+ * Operators:
+ * - \c &amp; \c | \c ! — nested AND / OR / NOT
+ * - \c = \c ~= \c &gt; \c &lt; \c &gt;= \c &lt;=
+ * - presence \c (attr=*) — \c NULLIF(attr, '') IS NOT NULL
+ *   (empty string and numeric 0 count as missing, via MySQL coercion)
+ * - equality with \c * — SQL LIKE (\c (name=pau*) → \c name LIKE 'pau%')
+ * - \c ~= — contains (\c name LIKE '%value%'; placeholders use CONCAT)
+ *
+ * \param [in] stmt A statement created with \ref qury_new
+ * \param [in] table Table name, interpolated as-is
+ * \param [in] table_len Length of \a table, or 0 for strlen
+ * \param [in] filter LDAP filter and optional column list
+ * \param [in] filter_len Length of \a filter, or 0 for strlen
+ * \return True on success, false on parse or prepare failure
+ */
+bool qury_filter(qury_stmt_t *stmt, const char *table, size_t table_len,
+                 const char *filter, size_t filter_len);
+
 /**
  * \brief Bind a parameter to a statement
  *

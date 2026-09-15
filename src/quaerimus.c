@@ -1,6 +1,7 @@
 
 #include "include/quaerimus.h"
 #include "include/array.h"
+#include "quaerimus_internal.h"
 #include <assert.h>
 #include <mariadb/mariadb_com.h>
 #include <mariadb/mysql.h>
@@ -88,7 +89,7 @@ static void *_memdup(void *head, const void *ptr, size_t len) {
     return tmp;
 }
 
-static qury_allocator_t *MemoryAllocator =
+qury_allocator_t *MemoryAllocator =
 &(qury_allocator_t){
     /* classic alloc/free/realloc */
     .alloc = _alloc,
@@ -513,6 +514,17 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
         length = strlen(query);
     }
 
+    /* Drop a previous result set so mysql_stmt_prepare can be called again. */
+    if (stmt->stmt) {
+        mysql_stmt_free_result(stmt->stmt);
+    }
+    if (stmt->fields.capacity > 0) {
+        clear_fields(stmt);
+    }
+    if (stmt->values.capacity > 0) {
+        clear_values(stmt);
+    }
+
     if (stmt->params.capacity > 0) {
         clear_params(stmt);
     } else {
@@ -522,14 +534,19 @@ bool qury_prepare(qury_stmt_t *stmt, const char *query, size_t length) {
         }
     }
 
-    /* Re-prepare: free previous query and MYSQL_BIND array */
+    /* Re-prepare: free previous query, result binds and param binds */
     if (MemoryAllocator->free) {
         MemoryAllocator->free(stmt->allocator, stmt->query);
         MemoryAllocator->free(stmt->allocator, stmt->binds);
+        MemoryAllocator->free(stmt->allocator, stmt->results);
     }
     stmt->query = NULL;
     stmt->binds = NULL;
+    stmt->results = NULL;
     stmt->params_bounded = false;
+    stmt->result_bounded = false;
+    stmt->query_executed = false;
+    stmt->field_cnt = 0;
 
     stmt->query = MemoryAllocator->strndup(stmt->allocator, query, length);
     if (!stmt->query) {

@@ -13,7 +13,7 @@ QURY_CFLAGS := $(CFLAGS) $(MARIA_CFLAGS)
 RM ?= rm -f
 
 ARRAY_SRC := $(ROOT)/src/array.c
-QURY_SRC := $(ROOT)/src/quaerimus.c $(ROOT)/src/array.c
+QURY_SRC := $(ROOT)/src/quaerimus.c $(ROOT)/src/quaerimus_filter.c $(ROOT)/src/array.c
 
 .PHONY: all test test-array test-qury clean
 
